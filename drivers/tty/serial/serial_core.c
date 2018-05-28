@@ -95,6 +95,9 @@ static void __uart_start(struct tty_struct *tty)
 	struct uart_state *state = tty->driver_data;
 	struct uart_port *port = state->uart_port;
 
+	if (port->ops->wake_peer)
+		port->ops->wake_peer(port);
+
 	if (!uart_circ_empty(&state->xmit) && state->xmit.buf &&
 	    !tty->stopped && !tty->hw_stopped)
 		port->ops->start_tx(port);
@@ -149,7 +152,7 @@ static int uart_port_startup(struct tty_struct *tty, struct uart_state *state,
 	 */
 	if (!state->xmit.buf) {
 		/* This is protected by the per port mutex */
-		page = get_zeroed_page(GFP_KERNEL);
+		page = get_zeroed_page(GFP_KERNEL | GFP_DMA);
 		if (!page)
 			return -ENOMEM;
 

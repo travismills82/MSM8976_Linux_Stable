@@ -8,6 +8,8 @@
 obj-y				+= irqchip/
 obj-y				+= bus/
 
+obj-$(CONFIG_GENERIC_PHY)	+= phy/
+
 # GPIO must come after pinctrl as gpios may need to mux pins etc
 obj-y				+= pinctrl/
 obj-y				+= gpio/
@@ -17,6 +19,7 @@ obj-$(CONFIG_PARISC)		+= parisc/
 obj-$(CONFIG_RAPIDIO)		+= rapidio/
 obj-y				+= video/
 obj-y				+= idle/
+obj-y				+= soc/
 
 # IPMI must come before ACPI in order to provide IPMI opregion support
 obj-$(CONFIG_IPMI_HANDLER)	+= char/ipmi/
@@ -55,15 +58,21 @@ obj-$(CONFIG_FB_I810)           += video/i810/
 obj-$(CONFIG_FB_INTEL)          += video/intelfb/
 
 obj-$(CONFIG_PARPORT)		+= parport/
-obj-y				+= base/ block/ misc/ mfd/ nfc/
+obj-y				+= base/ block/ misc/ mfd/ nfc/ soc/
+obj-$(CONFIG_VBUS_NOTIFIER)	+= staging/samsung/sec_notifier/
+obj-$(CONFIG_USE_MUIC)		+= muic/
 obj-$(CONFIG_NUBUS)		+= nubus/
 obj-y				+= macintosh/
 obj-$(CONFIG_IDE)		+= ide/
+obj-$(CONFIG_CRYPTO)		+= crypto/
 obj-$(CONFIG_SCSI)		+= scsi/
 obj-$(CONFIG_ATA)		+= ata/
 obj-$(CONFIG_TARGET_CORE)	+= target/
 obj-$(CONFIG_MTD)		+= mtd/
 obj-$(CONFIG_SPI)		+= spi/
+obj-$(CONFIG_SPMI)		+= spmi/
+obj-$(CONFIG_SLIMBUS)           += slimbus/
+obj-$(CONFIG_SOUNDWIRE)		+= soundwire/
 obj-y				+= hsi/
 obj-y				+= net/
 obj-$(CONFIG_ATM)		+= atm/
@@ -111,10 +120,10 @@ obj-$(CONFIG_CPU_IDLE)		+= cpuidle/
 obj-y				+= mmc/
 obj-$(CONFIG_MEMSTICK)		+= memstick/
 obj-y				+= leds/
+obj-$(CONFIG_SWITCH)		+= switch/
 obj-$(CONFIG_INFINIBAND)	+= infiniband/
 obj-$(CONFIG_SGI_SN)		+= sn/
 obj-y				+= firmware/
-obj-$(CONFIG_CRYPTO)		+= crypto/
 obj-$(CONFIG_SUPERH)		+= sh/
 obj-$(CONFIG_ARCH_SHMOBILE)	+= sh/
 obj-$(CONFIG_SSBI)		+= ssbi/
@@ -137,6 +146,7 @@ obj-y				+= clk/
 obj-$(CONFIG_MAILBOX)		+= mailbox/
 obj-$(CONFIG_HWSPINLOCK)	+= hwspinlock/
 obj-$(CONFIG_NFC)		+= nfc/
+obj-$(CONFIG_SAMSUNG_NFC)	+= nfc/
 obj-$(CONFIG_IOMMU_SUPPORT)	+= iommu/
 obj-$(CONFIG_REMOTEPROC)	+= remoteproc/
 obj-$(CONFIG_RPMSG)		+= rpmsg/
@@ -146,9 +156,45 @@ obj-$(CONFIG_VIRT_DRIVERS)	+= virt/
 obj-$(CONFIG_HYPERV)		+= hv/
 
 obj-$(CONFIG_PM_DEVFREQ)	+= devfreq/
+
+
+ifeq ($(CONFIG_BATTERY_SAMSUNG_V2_FOLDER), y)
+	obj-$(CONFIG_BATTERY_SAMSUNG)	+= battery_v2/
+else
+	obj-$(CONFIG_BATTERY_SAMSUNG)	+= battery/
+endif
+
 obj-$(CONFIG_EXTCON)		+= extcon/
 obj-$(CONFIG_MEMORY)		+= memory/
 obj-$(CONFIG_IIO)		+= iio/
 obj-$(CONFIG_VME_BUS)		+= vme/
 obj-$(CONFIG_IPACK_BUS)		+= ipack/
 obj-$(CONFIG_NTB)		+= ntb/
+obj-$(CONFIG_ANDROID)		+= android/
+
+#MobiCore
+obj-$(CONFIG_TRUSTONIC_TEE)  += gud/
+
+obj-$(CONFIG_CORESIGHT)		+= coresight/
+obj-$(CONFIG_ESOC)		+= esoc/
+
+obj-$(CONFIG_BIF)		+= bif/
+obj-$(CONFIG_SENSORS)		+= sensors/
+obj-$(CONFIG_SENSORS_SSC)	+= sensors/
+
+# FINGERPRINT
+obj-$(CONFIG_SENSORS_FINGERPRINT)	+= fingerprint/
+
+# Motor
+obj-y				+= motor/
+
+#Sensorhub
+obj-$(CONFIG_SENSORS_SSP)	+= sensorhub/
+
+# CONFIG_SEC_DEBUG
+obj-y				+= debug/
+
+#CONFIG_ARCH_MSM8952
+obj-$(CONFIG_ARCH_MSM8952)     += debug_32/
+# CCIC
+obj-y	+= ccic/

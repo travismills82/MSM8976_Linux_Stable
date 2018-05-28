@@ -470,7 +470,7 @@ static inline void napi_disable(struct napi_struct *n)
 static inline void napi_enable(struct napi_struct *n)
 {
 	BUG_ON(!test_bit(NAPI_STATE_SCHED, &n->state));
-	smp_mb__before_clear_bit();
+	smp_mb__before_atomic();
 	clear_bit(NAPI_STATE_SCHED, &n->state);
 }
 
@@ -1800,6 +1800,7 @@ struct softnet_data {
 	struct Qdisc		*output_queue;
 	struct Qdisc		**output_queue_tailp;
 	struct list_head	poll_list;
+	struct napi_struct	*current_napi;
 	struct sk_buff		*completion_queue;
 	struct sk_buff_head	process_queue;
 
@@ -2221,6 +2222,7 @@ extern gro_result_t	napi_gro_receive(struct napi_struct *napi,
 extern void		napi_gro_flush(struct napi_struct *napi, bool flush_old);
 extern struct sk_buff *	napi_get_frags(struct napi_struct *napi);
 extern gro_result_t	napi_gro_frags(struct napi_struct *napi);
+extern struct napi_struct *get_current_napi_context(void);
 
 static inline void napi_free_frags(struct napi_struct *napi)
 {
@@ -2228,7 +2230,6 @@ static inline void napi_free_frags(struct napi_struct *napi)
 	napi->skb = NULL;
 }
 
-bool netdev_is_rx_handler_busy(struct net_device *dev);
 extern int netdev_rx_handler_register(struct net_device *dev,
 				      rx_handler_func_t *rx_handler,
 				      void *rx_handler_data);

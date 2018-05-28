@@ -135,6 +135,7 @@ static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(0x10C4, 0xEA60) }, /* Silicon Labs factory default */
 	{ USB_DEVICE(0x10C4, 0xEA61) }, /* Silicon Labs factory default */
 	{ USB_DEVICE(0x10C4, 0xEA70) }, /* Silicon Labs factory default */
+	{ USB_DEVICE(0x10C4, 0xEA80) }, /* Silicon Labs factory default */
 	{ USB_DEVICE(0x10C4, 0xEA71) }, /* Infinity GPS-MIC-1 Radio Monophone */
 	{ USB_DEVICE(0x10C4, 0xF001) }, /* Elan Digital Systems USBscope50 */
 	{ USB_DEVICE(0x10C4, 0xF002) }, /* Elan Digital Systems USBwave12 */
@@ -793,7 +794,7 @@ static void cp210x_set_termios(struct tty_struct *tty,
 		} else {
 			modem_ctl[0] &= ~0x7B;
 			modem_ctl[0] |= 0x01;
-			modem_ctl[1] = 0x40;
+			modem_ctl[1] |= 0x40;
 			dev_dbg(dev, "%s - flow control = NONE\n", __func__);
 		}
 
@@ -853,9 +854,7 @@ static int cp210x_tiocmget(struct tty_struct *tty)
 	unsigned int control;
 	int result;
 
-	result = cp210x_get_config(port, CP210X_GET_MDMSTS, &control, 1);
-	if (result)
-		return result;
+	cp210x_get_config(port, CP210X_GET_MDMSTS, &control, 1);
 
 	result = ((control & CONTROL_DTR) ? TIOCM_DTR : 0)
 		|((control & CONTROL_RTS) ? TIOCM_RTS : 0)

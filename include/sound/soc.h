@@ -21,6 +21,7 @@
 #include <linux/kernel.h>
 #include <linux/regmap.h>
 #include <linux/log2.h>
+#include <linux/async.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/compress_driver.h>
@@ -198,6 +199,14 @@
 	.get = xhandler_get, .put = xhandler_put, \
 	.private_value = \
 		SOC_DOUBLE_VALUE(reg, shift_left, shift_right, max, invert) }
+#define SOC_SINGLE_MULTI_EXT(xname, xreg, xshift, xmax, xinvert, xcount,\
+	xhandler_get, xhandler_put) \
+{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
+	.info = snd_soc_info_multi_ext, \
+	.get = xhandler_get, .put = xhandler_put, \
+	.private_value = (unsigned long)&(struct soc_multi_mixer_control) \
+		{.reg = xreg, .shift = xshift, .rshift = xshift, .max = xmax, \
+		.count = xcount, .platform_max = xmax, .invert = xinvert} }
 #define SOC_SINGLE_EXT_TLV(xname, xreg, xshift, xmax, xinvert,\
 	 xhandler_get, xhandler_put, tlv_array) \
 {	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
@@ -292,6 +301,10 @@
 #define SND_SOC_COMP_ORDER_NORMAL		0
 #define SND_SOC_COMP_ORDER_LATE		1
 #define SND_SOC_COMP_ORDER_LAST		2
+
+/* DAI Link Host Mode Support */
+#define SND_SOC_DAI_LINK_NO_HOST		0x1
+#define SND_SOC_DAI_LINK_OPT_HOST		0x2
 
 /*
  * Bias levels
@@ -438,6 +451,8 @@ int snd_soc_platform_trigger(struct snd_pcm_substream *substream,
 int snd_soc_jack_new(struct snd_soc_codec *codec, const char *id, int type,
 		     struct snd_soc_jack *jack);
 void snd_soc_jack_report(struct snd_soc_jack *jack, int status, int mask);
+void snd_soc_jack_report_no_dapm(struct snd_soc_jack *jack, int status,
+				 int mask);
 int snd_soc_jack_add_pins(struct snd_soc_jack *jack, int count,
 			  struct snd_soc_jack_pin *pins);
 void snd_soc_jack_notifier_register(struct snd_soc_jack *jack,
@@ -467,12 +482,17 @@ int snd_soc_new_ac97_codec(struct snd_soc_codec *codec,
 	struct snd_ac97_bus_ops *ops, int num);
 void snd_soc_free_ac97_codec(struct snd_soc_codec *codec);
 
+void snd_soc_card_change_online_state(struct snd_soc_card *soc_card,
+				      int online);
+
 /*
  *Controls
  */
 struct snd_kcontrol *snd_soc_cnew(const struct snd_kcontrol_new *_template,
 				  void *data, const char *long_name,
 				  const char *prefix);
+struct snd_kcontrol *snd_soc_card_get_kcontrol(struct snd_soc_card *soc_card,
+					       const char *name);
 int snd_soc_add_codec_controls(struct snd_soc_codec *codec,
 	const struct snd_kcontrol_new *controls, int num_controls);
 int snd_soc_add_platform_controls(struct snd_soc_platform *platform,
@@ -538,6 +558,9 @@ int snd_soc_get_strobe(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol);
 int snd_soc_put_strobe(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol);
+int snd_soc_info_multi_ext(struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_info *uinfo);
+
 
 /**
  * struct snd_soc_reg_access - Describes whether a given register is
@@ -636,6 +659,7 @@ struct snd_soc_pcm_stream {
 	unsigned int channels_min;	/* min channels */
 	unsigned int channels_max;	/* max channels */
 	unsigned int sig_bits;		/* number of bits of content */
+	const char *aif_name;	/* DAPM AIF widget name */
 };
 
 /* SoC audio ops */
@@ -810,6 +834,16 @@ struct snd_soc_platform_driver {
 	snd_pcm_sframes_t (*delay)(struct snd_pcm_substream *,
 		struct snd_soc_dai *);
 
+	/*
+	 * For platform-caused delay reporting, where the thread blocks waiting
+	 * for the delay amount to be determined.  Defining this will cause the
+	 * ASoC core to skip calling the delay callbacks for all components in
+	 * the runtime.
+	 * Optional.
+	 */
+	snd_pcm_sframes_t (*delay_blk)(struct snd_pcm_substream *,
+		struct snd_soc_dai *);
+
 	/* platform stream pcm ops */
 	const struct snd_pcm_ops *ops;
 
@@ -863,6 +897,14 @@ struct snd_soc_component {
 	struct list_head list;
 
 	const struct snd_soc_component_driver *driver;
+};
+
+enum snd_soc_async_ops {
+	ASYNC_DPCM_SND_SOC_OPEN = 1 << 0,
+	ASYNC_DPCM_SND_SOC_CLOSE = 1 << 1,
+	ASYNC_DPCM_SND_SOC_PREPARE = 1 << 2,
+	ASYNC_DPCM_SND_SOC_HW_PARAMS = 1 << 3,
+	ASYNC_DPCM_SND_SOC_FREE = 1 << 4,
 };
 
 struct snd_soc_dai_link {
@@ -919,6 +961,9 @@ struct snd_soc_dai_link {
 	/* This DAI link can route to other DAI links at runtime (Frontend)*/
 	unsigned int dynamic:1;
 
+	/* This DAI can support no host IO (no pcm data is copied to from host) */
+	unsigned int no_host_mode:2;
+
 	/* pmdown_time is ignored at stop */
 	unsigned int ignore_pmdown_time:1;
 
@@ -932,6 +977,9 @@ struct snd_soc_dai_link {
 	/* machine stream operations */
 	const struct snd_soc_ops *ops;
 	const struct snd_soc_compr_ops *compr_ops;
+
+	/* this value determines what all ops can be started asynchronously */
+	enum snd_soc_async_ops async_ops;
 };
 
 struct snd_soc_codec_conf {
@@ -970,6 +1018,7 @@ struct snd_soc_card {
 	struct list_head list;
 	struct mutex mutex;
 	struct mutex dapm_mutex;
+	struct mutex dapm_power_mutex;
 
 	bool instantiated;
 
@@ -1063,9 +1112,13 @@ struct snd_soc_pcm_runtime {
 
 	/* Dynamic PCM BE runtime data */
 	struct snd_soc_dpcm_runtime dpcm[2];
+	int fe_compr;
 
 	long pmdown_time;
 	unsigned char pop_wait:1;
+
+	/* err in case of ops failed */
+	int err_ops;
 
 	/* runtime devices */
 	struct snd_pcm *pcm;
@@ -1098,6 +1151,11 @@ struct soc_bytes {
 struct soc_mreg_control {
 	long min, max;
 	unsigned int regbase, regcount, nbits, invert;
+};
+
+struct soc_multi_mixer_control {
+	int min, max, platform_max, count;
+	unsigned int reg, rreg, shift, rshift, invert;
 };
 
 /* enumerated kcontrol */
@@ -1196,6 +1254,7 @@ int snd_soc_of_parse_audio_routing(struct snd_soc_card *card,
 				   const char *propname);
 unsigned int snd_soc_of_parse_daifmt(struct device_node *np,
 				     const char *prefix);
+int soc_check_aux_dev_byname(struct snd_soc_card *card, const char *codec_name);
 
 #include <sound/soc-dai.h>
 

@@ -61,11 +61,12 @@
 #include <linux/nsproxy.h>
 #include <linux/ptrace.h>
 #include <linux/sched/rt.h>
+#include <linux/freezer.h>
 #include <linux/hugetlb.h>
 
 #include <asm/futex.h>
 
-#include "rtmutex_common.h"
+#include "locking/rtmutex_common.h"
 
 #ifndef CONFIG_HAVE_FUTEX_CMPXCHG
 int __read_mostly futex_cmpxchg_enabled;
@@ -1935,7 +1936,7 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 		 * is no timeout, or if it has yet to expire.
 		 */
 		if (!timeout || timeout->task)
-			schedule();
+			freezable_schedule();
 	}
 	__set_current_state(TASK_RUNNING);
 }
@@ -2439,6 +2440,8 @@ static int futex_wait_requeue_pi(u32 __user *uaddr, unsigned int flags,
 	 * code while we sleep on uaddr.
 	 */
 	debug_rt_mutex_init_waiter(&rt_waiter);
+	RB_CLEAR_NODE(&rt_waiter.pi_tree_entry);
+	RB_CLEAR_NODE(&rt_waiter.tree_entry);
 	rt_waiter.task = NULL;
 
 	ret = get_futex_key(uaddr2, flags & FLAGS_SHARED, &key2, VERIFY_WRITE);

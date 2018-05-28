@@ -37,12 +37,10 @@ obj-$(CONFIG_MFD_ARIZONA)	+= arizona-core.o
 obj-$(CONFIG_MFD_ARIZONA)	+= arizona-irq.o
 obj-$(CONFIG_MFD_ARIZONA_I2C)	+= arizona-i2c.o
 obj-$(CONFIG_MFD_ARIZONA_SPI)	+= arizona-spi.o
-ifneq ($(CONFIG_MFD_WM5102),n)
-obj-$(CONFIG_MFD_ARIZONA)	+= wm5102-tables.o
-endif
-ifneq ($(CONFIG_MFD_WM5110),n)
-obj-$(CONFIG_MFD_ARIZONA)	+= wm5110-tables.o
-endif
+obj-$(CONFIG_MFD_CS47L15)	+= cs47l15-tables.o
+obj-$(CONFIG_MFD_WM5102)	+= wm5102-tables.o
+obj-$(CONFIG_MFD_WM5110)	+= wm5110-tables.o
+
 obj-$(CONFIG_MFD_WM8400)	+= wm8400-core.o
 wm831x-objs			:= wm831x-core.o wm831x-irq.o wm831x-otp.o
 wm831x-objs			+= wm831x-auxadc.o
@@ -73,6 +71,8 @@ obj-$(CONFIG_TWL4030_POWER)    += twl4030-power.o
 obj-$(CONFIG_MFD_TWL4030_AUDIO)	+= twl4030-audio.o
 obj-$(CONFIG_TWL6040_CORE)	+= twl6040.o
 
+
+
 obj-$(CONFIG_MFD_MC13XXX)	+= mc13xxx-core.o
 obj-$(CONFIG_MFD_MC13XXX_SPI)	+= mc13xxx-spi.o
 obj-$(CONFIG_MFD_MC13XXX_I2C)	+= mc13xxx-i2c.o
@@ -86,6 +86,27 @@ obj-$(CONFIG_MCP_SA11X0)	+= mcp-sa11x0.o
 obj-$(CONFIG_MCP_UCB1200)	+= ucb1x00-core.o
 obj-$(CONFIG_MFD_SMSC)        += smsc-ece1099.o
 obj-$(CONFIG_MCP_UCB1200_TS)	+= ucb1x00-ts.o
+
+obj-$(CONFIG_WCD9310_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o \
+						wcd9xxx-slimslave.o wcd9xxx-core-resource.o
+obj-$(CONFIG_WCD9304_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o \
+						wcd9xxx-slimslave.o wcd9xxx-core-resource.o
+obj-$(CONFIG_WCD9320_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o\
+						wcd9xxx-core-resource.o
+obj-$(CONFIG_WCD9306_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o\
+						wcd9xxx-slimslave.o wcd9xxx-core-resource.o
+obj-$(CONFIG_WCD9330_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o\
+						wcd9xxx-core-resource.o
+obj-$(CONFIG_WCD9335_CODEC)	+= wcd9xxx-core.o wcd9xxx-irq.o wcd9xxx-slimslave.o\
+						wcd9xxx-core-resource.o wcd9335-regmap.o\
+                                                wcd9335-tables.o wcd-gpio-ctrl.o
+obj-$(CONFIG_SND_SOC_MSM8X16_WCD)	+= wcd9xxx-core.o wcd9xxx-irq.o\
+						wcd9xxx-slimslave.o wcd9xxx-core-resource.o
+obj-$(CONFIG_SND_SOC_MSM8909_WCD)	+= wcd9xxx-core.o wcd9xxx-irq.o\
+						wcd9xxx-slimslave.o wcd9xxx-core-resource.o
+obj-$(CONFIG_MFD_S2MU005)	+= s2mu005_core.o s2mu005_irq.o
+obj-$(CONFIG_MFD_S2MPB02)       += s2mpb02-core.o s2mpb02-irq.o
+obj-$(CONFIG_MFD_S2MPB01)       += s2mpb01-core.o s2mpb01-irq.o
 
 ifeq ($(CONFIG_SA1100_ASSABET),y)
 obj-$(CONFIG_MCP_UCB1200)	+= ucb1x00-assabet.o
@@ -106,11 +127,13 @@ obj-$(CONFIG_MFD_DA9055)	+= da9055.o
 
 obj-$(CONFIG_MFD_MAX77686)	+= max77686.o max77686-irq.o
 obj-$(CONFIG_MFD_MAX77693)	+= max77693.o max77693-irq.o
+obj-$(CONFIG_MFD_SM5705)        += sm5705.o sm5705-irq.o
 obj-$(CONFIG_MFD_MAX8907)	+= max8907.o
 max8925-objs			:= max8925-core.o max8925-i2c.o
 obj-$(CONFIG_MFD_MAX8925)	+= max8925.o
 obj-$(CONFIG_MFD_MAX8997)	+= max8997.o max8997-irq.o
 obj-$(CONFIG_MFD_MAX8998)	+= max8998.o max8998-irq.o
+obj-$(CONFIG_MFD_MAX77843)      += max77843.o max77843-irq.o
 
 pcf50633-objs			:= pcf50633-core.o pcf50633-irq.o
 obj-$(CONFIG_MFD_PCF50633)	+= pcf50633.o
@@ -141,6 +164,7 @@ obj-$(CONFIG_MFD_SI476X_CORE)	+= si476x-core.o
 obj-$(CONFIG_MFD_CS5535)	+= cs5535-mfd.o
 obj-$(CONFIG_MFD_OMAP_USB_HOST)	+= omap-usb-host.o omap-usb-tll.o
 obj-$(CONFIG_MFD_PM8921_CORE) 	+= pm8921-core.o
+obj-$(CONFIG_MFD_I2C_PMIC)	+= qcom-i2c-pmic.o
 obj-$(CONFIG_MFD_PM8XXX_IRQ) 	+= pm8xxx-irq.o
 obj-$(CONFIG_TPS65911_COMPARATOR)	+= tps65911-comparator.o
 obj-$(CONFIG_MFD_TPS65090)	+= tps65090.o
@@ -155,3 +179,9 @@ obj-$(CONFIG_MFD_LM3533)	+= lm3533-core.o lm3533-ctrlbank.o
 obj-$(CONFIG_VEXPRESS_CONFIG)	+= vexpress-config.o vexpress-sysreg.o
 obj-$(CONFIG_MFD_RETU)		+= retu-mfd.o
 obj-$(CONFIG_MFD_AS3711)	+= as3711.o
+obj-$(CONFIG_MFD_RT5033)	+= rt5033_core.o rt5033_irq.o
+obj-$(CONFIG_MFD_SM5703) 	+= sm5703_core.o sm5703_irq.o
+obj-$(CONFIG_MFD_SM5701) 	+= sm5701_core.o sm5701_irq.o
+obj-$(CONFIG_MFD_S2MU003)	+= s2mu003_core.o s2mu003_irq.o
+obj-$(CONFIG_MFD_S2MU005)	+= s2mu005_core.o s2mu005_irq.o
+obj-$(CONFIG_MFD_LM3632)	+= lm3632.o

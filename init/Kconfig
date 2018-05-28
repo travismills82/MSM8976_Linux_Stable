@@ -252,10 +252,13 @@ config AUDIT
 	  kernel subsystem, such as SELinux (which requires this for
 	  logging of avc messages output).  Does not do system-call
 	  auditing without CONFIG_AUDITSYSCALL.
+	  
+config HAVE_ARCH_AUDITSYSCALL
+	bool
 
 config AUDITSYSCALL
 	bool "Enable system-call auditing support"
-	depends on AUDIT && (X86 || PPC || S390 || IA64 || UML || SPARC64 || SUPERH || (ARM && AEABI && !OABI_COMPAT))
+	depends on AUDIT && HAVE_ARCH_AUDITSYSCALL
 	default y if SECURITY_SELINUX
 	help
 	  Enable low-overhead system-call auditing infrastructure that
@@ -580,16 +583,13 @@ config RCU_FAST_NO_HZ
 	depends on NO_HZ_COMMON && SMP
 	default n
 	help
-	  This option permits CPUs to enter dynticks-idle state even if
-	  they have RCU callbacks queued, and prevents RCU from waking
-	  these CPUs up more than roughly once every four jiffies (by
-	  default, you can adjust this using the rcutree.rcu_idle_gp_delay
-	  parameter), thus improving energy efficiency.  On the other
-	  hand, this option increases the duration of RCU grace periods,
-	  for example, slowing down synchronize_rcu().
+	  This option causes RCU to attempt to accelerate grace periods in
+	  order to allow CPUs to enter dynticks-idle state more quickly.
+	  On the other hand, this option increases the overhead of the
+	  dynticks-idle checking, thus degrading scheduling latency.
 
-	  Say Y if energy efficiency is critically important, and you
-	  	don't care about increased grace-period durations.
+	  Say Y if energy efficiency is critically important, and you don't
+	  care about real-time response.
 
 	  Say N if you are unsure.
 
@@ -756,6 +756,9 @@ config LOG_BUF_SHIFT
 # Architectures with an unreliable sched_clock() should select this:
 #
 config HAVE_UNSTABLE_SCHED_CLOCK
+	bool
+
+config GENERIC_SCHED_CLOCK
 	bool
 
 #
@@ -1027,6 +1030,24 @@ config DEBUG_BLK_CGROUP
 
 endif # CGROUPS
 
+config SCHED_HMP
+	bool "Scheduler support for heterogenous multi-processor systems"
+	depends on SMP && FAIR_GROUP_SCHED
+	help
+	  This feature will let the scheduler optimize task placement on
+	  systems made of heterogeneous cpus i.e cpus that differ either
+	  in their instructions per-cycle capability or the maximum
+	  frequency they can attain.
+
+config SCHED_TASK_BEHAVIOR
+	bool "Scheduler support for Task Behavior based task placement"
+	depends on SCHED_HMP
+	default n
+	help
+	  This feature will let the scheduler optimize task placement on
+	  heterogeneous cpus such that the IO-intensive tasks and background
+	  tasks will always be placed on the LITTLE cluster.
+
 config CHECKPOINT_RESTORE
 	bool "Checkpoint/restore support" if EXPERT
 	default n
@@ -1250,6 +1271,12 @@ config HOTPLUG
 
 config HAVE_PCSPKR_PLATFORM
 	bool
+
+config PANIC_TIMEOUT
+	int "Default panic timeout"
+	default 0
+	help
+	  Set default panic timeout.
 
 menuconfig EXPERT
 	bool "Configure standard kernel features (expert users)"
@@ -1512,6 +1539,20 @@ config VM_EVENT_COUNTERS
 	  on EXPERT systems.  /proc/vmstat will only show page counts
 	  if VM event counters are disabled.
 
+config SEC_VM_EVENT_STATE_TRACER
+	default n
+	bool "Enable VM event state tracer for logging VM infomation"
+	depends on VM_EVENT_COUNTERS
+	help
+	  VM event tracer to trace VM information for specific amount of time
+
+config SEC_VM_EVENT_STATE_TRACER_DURATION
+	int "VM event state tracer duration (min)"
+	default "10"
+	depends on SEC_VM_EVENT_STATE_TRACER
+	help
+	  VM event state tracer duration (min)
+
 config SLUB_DEBUG
 	default y
 	bool "Enable SLUB debugging support" if EXPERT
@@ -1624,6 +1665,18 @@ config BASE_SMALL
 	default 0 if BASE_FULL
 	default 1 if !BASE_FULL
 
+config SYSTEM_TRUSTED_KEYRING
+	bool "Provide system-wide ring of trusted keys"
+	depends on KEYS
+	help
+	  Provide a system keyring to which trusted keys can be added.  Keys in
+	  the keyring are considered to be trusted.  Keys may be added at will
+	  by the kernel from compiled-in data and from hardware key stores, but
+	  userspace may only add extra keys if those keys can be verified by
+	  keys already in the keyring.
+
+	  Keys in this keyring are used by module signature checking.
+
 menuconfig MODULES
 	bool "Enable loadable module support"
 	help
@@ -1696,6 +1749,7 @@ config MODULE_SRCVERSION_ALL
 config MODULE_SIG
 	bool "Module signature verification"
 	depends on MODULES
+	select SYSTEM_TRUSTED_KEYRING
 	select KEYS
 	select CRYPTO
 	select ASYMMETRIC_KEY_TYPE

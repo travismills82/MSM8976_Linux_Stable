@@ -154,6 +154,7 @@ void unix_notinflight(struct user_struct *user, struct file *fp)
 
 		BUG_ON(!atomic_long_read(&u->inflight));
 		BUG_ON(list_empty(&u->link));
+
 		if (atomic_long_dec_and_test(&u->inflight))
 			list_del_init(&u->link);
 		unix_tot_inflight--;

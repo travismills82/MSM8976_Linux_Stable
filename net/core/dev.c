@@ -1312,7 +1312,7 @@ static int __dev_close_many(struct list_head *head)
 		 * dev->stop() will invoke napi_disable() on all of it's
 		 * napi_struct instances on this device.
 		 */
-		smp_mb__after_clear_bit(); /* Commit netif_running(). */
+		smp_mb__after_atomic(); /* Commit netif_running(). */
 	}
 
 	dev_deactivate_many(head);
@@ -2256,7 +2256,7 @@ int skb_checksum_help(struct sk_buff *skb)
 			goto out;
 	}
 
-	*(__sum16 *)(skb->data + offset) = csum_fold(csum) ?: CSUM_MANGLED_0;
+	*(__sum16 *)(skb->data + offset) = csum_fold(csum);
 out_set_summed:
 	skb->ip_summed = CHECKSUM_NONE;
 out:
@@ -3284,7 +3284,7 @@ static void net_tx_action(struct softirq_action *h)
 
 			root_lock = qdisc_lock(q);
 			if (spin_trylock(root_lock)) {
-				smp_mb__before_clear_bit();
+				smp_mb__before_atomic();
 				clear_bit(__QDISC_STATE_SCHED,
 					  &q->state);
 				qdisc_run(q);
@@ -3294,7 +3294,7 @@ static void net_tx_action(struct softirq_action *h)
 					      &q->state)) {
 					__netif_reschedule(q);
 				} else {
-					smp_mb__before_clear_bit();
+					smp_mb__before_atomic();
 					clear_bit(__QDISC_STATE_SCHED,
 						  &q->state);
 				}
@@ -3373,22 +3373,6 @@ out:
 	return skb;
 }
 #endif
-
-/**
- *	netdev_is_rx_handler_busy - check if receive handler is registered
- *	@dev: device to check
- *
- *	Check if a receive handler is already registered for a given device.
- *	Return true if there one.
- *
- *	The caller must hold the rtnl_mutex.
- */
-bool netdev_is_rx_handler_busy(struct net_device *dev)
-{
-	ASSERT_RTNL();
-	return dev && rtnl_dereference(dev->rx_handler);
-}
-EXPORT_SYMBOL_GPL(netdev_is_rx_handler_busy);
 
 /**
  *	netdev_rx_handler_register - register receive handler
@@ -4033,6 +4017,27 @@ gro_result_t napi_gro_frags(struct napi_struct *napi)
 }
 EXPORT_SYMBOL(napi_gro_frags);
 
+static void net_rps_send_ipi(struct softnet_data *remsd)
+{
+#ifdef CONFIG_RPS
+	while (remsd) {
+		struct softnet_data *next = remsd->rps_ipi_next;
+
+		if (cpu_online(remsd->cpu)) {
+			__smp_call_function_single(remsd->cpu,
+						   &remsd->csd, 0);
+		} else {
+			pr_err("%s(), cpu was offline and IPI was not "
+			"delivered so clean up NAPI", __func__);
+			rps_lock(remsd);
+			remsd->backlog.state = 0;
+			rps_unlock(remsd);
+		}
+		remsd = next;
+	}
+#endif
+}
+
 /*
  * net_rps_action sends any pending IPI's for rps.
  * Note: called with local irq disabled, but exits with local irq enabled.
@@ -4048,14 +4053,7 @@ static void net_rps_action_and_irq_enable(struct softnet_data *sd)
 		local_irq_enable();
 
 		/* Send pending IPI's to kick RPS processing on remote cpus. */
-		while (remsd) {
-			struct softnet_data *next = remsd->rps_ipi_next;
-
-			if (cpu_online(remsd->cpu))
-				__smp_call_function_single(remsd->cpu,
-							   &remsd->csd, 0);
-			remsd = next;
-		}
+		net_rps_send_ipi(remsd);
 	} else
 #endif
 		local_irq_enable();
@@ -4065,6 +4063,7 @@ static int process_backlog(struct napi_struct *napi, int quota)
 {
 	int work = 0;
 	struct softnet_data *sd = container_of(napi, struct softnet_data, backlog);
+	static int quota_changed;
 
 #ifdef CONFIG_RPS
 	/* Check if we have pending ipi, its better to send them now,
@@ -4089,7 +4088,14 @@ static int process_backlog(struct napi_struct *napi, int quota)
 			local_irq_disable();
 			input_queue_head_incr(sd);
 			if (++work >= quota) {
+				if (quota_changed) {
+					local_irq_enable();
+					napi_gro_flush(napi, false);
+					local_irq_disable();
+					quota_changed = 0;
+				}
 				local_irq_enable();
+				sd->current_napi = NULL;
 				return work;
 			}
 		}
@@ -4112,10 +4118,12 @@ static int process_backlog(struct napi_struct *napi, int quota)
 			napi->state = 0;
 
 			quota = work + qlen;
+			quota_changed = 1;
 		}
 		rps_unlock(sd);
 	}
 	local_irq_enable();
+	sd->current_napi = NULL;
 
 	return work;
 }
@@ -4138,11 +4146,14 @@ EXPORT_SYMBOL(__napi_schedule);
 
 void __napi_complete(struct napi_struct *n)
 {
+	struct softnet_data *sd = &__get_cpu_var(softnet_data);
+
 	BUG_ON(!test_bit(NAPI_STATE_SCHED, &n->state));
 	BUG_ON(n->gro_list);
 
 	list_del(&n->poll_list);
-	smp_mb__before_clear_bit();
+	smp_mb__before_atomic();
+	sd->current_napi = NULL;
 	clear_bit(NAPI_STATE_SCHED, &n->state);
 }
 EXPORT_SYMBOL(__napi_complete);
@@ -4205,6 +4216,13 @@ void netif_napi_del(struct napi_struct *napi)
 }
 EXPORT_SYMBOL(netif_napi_del);
 
+struct napi_struct *get_current_napi_context(void)
+{
+	struct softnet_data *sd = &__get_cpu_var(softnet_data);
+	return sd->current_napi;
+}
+EXPORT_SYMBOL(get_current_napi_context);
+
 static void net_rx_action(struct softirq_action *h)
 {
 	struct softnet_data *sd = &__get_cpu_var(softnet_data);
@@ -4246,6 +4264,7 @@ static void net_rx_action(struct softirq_action *h)
 		 */
 		work = 0;
 		if (test_bit(NAPI_STATE_SCHED, &n->state)) {
+			sd->current_napi = n;
 			work = n->poll(n, weight);
 			trace_napi_poll(n);
 		}
@@ -6036,10 +6055,11 @@ static int dev_cpu_callback(struct notifier_block *nfb,
 	struct sk_buff **list_skb;
 	struct sk_buff *skb;
 	unsigned int cpu, oldcpu = (unsigned long)ocpu;
-	struct softnet_data *sd, *oldsd;
+	struct softnet_data *sd, *oldsd, *remsd;
 
 	if (action != CPU_DEAD && action != CPU_DEAD_FROZEN)
 		return NOTIFY_OK;
+
 
 	local_irq_disable();
 	cpu = smp_processor_id();
@@ -6079,6 +6099,13 @@ static int dev_cpu_callback(struct notifier_block *nfb,
 
 	raise_softirq_irqoff(NET_TX_SOFTIRQ);
 	local_irq_enable();
+
+#ifdef CONFIG_RPS
+	remsd = oldsd->rps_ipi_list;
+	oldsd->rps_ipi_list = NULL;
+#endif
+	/* send out pending IPI's on offline CPU */
+	net_rps_send_ipi(remsd);
 
 	/* Process offline CPU's input_pkt_queue */
 	while ((skb = __skb_dequeue(&oldsd->process_queue))) {

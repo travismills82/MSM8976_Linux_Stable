@@ -104,6 +104,9 @@ struct device;
 {	.id = snd_soc_dapm_value_mux, .name = wname, .reg = wreg, \
 	.shift = wshift, .invert = winvert, .kcontrol_news = wcontrols, \
 	.num_kcontrols = 1}
+#define SND_SOC_DAPM_DEMUX(wname, wreg, wshift, winvert, wcontrols) \
+{	.id = snd_soc_dapm_demux, .name = wname, .reg = wreg, .shift = wshift, \
+	.invert = winvert, .kcontrol_news = wcontrols, .num_kcontrols = 1}
 
 /* Simplified versions of above macros, assuming wncontrols = ARRAY_SIZE(wcontrols) */
 #define SOC_PGA_ARRAY(wname, wreg, wshift, winvert,\
@@ -294,7 +297,10 @@ struct device;
 	.get = snd_soc_dapm_get_pin_switch, \
 	.put = snd_soc_dapm_put_pin_switch, \
 	.private_value = (unsigned long)xname }
-
+#define SND_SOC_DAPM_MICBIAS_E(wname, wreg, wshift, winvert, wevent, wflags) \
+{	.id = snd_soc_dapm_micbias, .name = wname, .reg = wreg, .shift = wshift, \
+	.invert = winvert, .kcontrol_news = NULL, .num_kcontrols = 0, \
+	.event = wevent, .event_flags = wflags}
 /* dapm stream operations */
 #define SND_SOC_DAPM_STREAM_NOP			0x0
 #define SND_SOC_DAPM_STREAM_START		0x1
@@ -429,6 +435,7 @@ enum snd_soc_dapm_type {
 	snd_soc_dapm_mux,			/* selects 1 analog signal from many inputs */
 	snd_soc_dapm_virt_mux,			/* virtual version of snd_soc_dapm_mux */
 	snd_soc_dapm_value_mux,			/* selects 1 analog signal from many inputs */
+	snd_soc_dapm_demux,			/* connects the input to one of multiple outputs */
 	snd_soc_dapm_mixer,			/* mixes several analog signals together */
 	snd_soc_dapm_mixer_named_ctl,		/* mixer with named controls */
 	snd_soc_dapm_pga,			/* programmable gain/attenuation (volume) */

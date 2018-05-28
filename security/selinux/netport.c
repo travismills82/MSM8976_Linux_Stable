@@ -41,6 +41,7 @@
 
 #include "netport.h"
 #include "objsec.h"
+#include "avc.h"
 
 #define SEL_NETPORT_HASH_SIZE       256
 #define SEL_NETPORT_HASH_BKT_LIMIT   16
@@ -217,7 +218,7 @@ int sel_netport_sid(u8 protocol, u16 pnum, u32 *sid)
  * Remove all entries from the network address table.
  *
  */
-static void sel_netport_flush(void)
+void sel_netport_flush(void)
 {
 	unsigned int idx;
 	struct sel_netport *port, *port_tmp;
@@ -248,6 +249,11 @@ static __init int sel_netport_init(void)
 	int iter;
 	int ret;
 
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+	selinux_enabled = 1;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	if (!selinux_enabled)
 		return 0;
 

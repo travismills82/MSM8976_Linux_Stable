@@ -161,6 +161,7 @@ phys_addr_t memblock_end_of_DRAM(void);
 void memblock_enforce_memory_limit(phys_addr_t memory_limit);
 int memblock_is_memory(phys_addr_t addr);
 int memblock_is_region_memory(phys_addr_t base, phys_addr_t size);
+int memblock_overlaps_memory(phys_addr_t base, phys_addr_t size);
 int memblock_is_reserved(phys_addr_t addr);
 int memblock_is_region_reserved(phys_addr_t base, phys_addr_t size);
 
@@ -180,6 +181,8 @@ static inline void memblock_dump_all(void)
  */
 void memblock_set_current_limit(phys_addr_t limit);
 
+
+phys_addr_t memblock_get_current_limit(void);
 
 /*
  * pfn conversion functions
@@ -230,6 +233,12 @@ static inline unsigned long memblock_region_reserved_end_pfn(const struct memblo
 	     region < (memblock.memblock_type.regions + memblock.memblock_type.cnt);	\
 	     region++)
 
+#define for_each_memblock_rev(memblock_type, region)	\
+	for (region = memblock.memblock_type.regions + \
+			memblock.memblock_type.cnt - 1;	\
+	     region >= memblock.memblock_type.regions;	\
+	     region--)
+
 
 #ifdef CONFIG_ARCH_DISCARD_MEMBLOCK
 #define __init_memblock __meminit
@@ -237,6 +246,14 @@ static inline unsigned long memblock_region_reserved_end_pfn(const struct memblo
 #else
 #define __init_memblock
 #define __initdata_memblock
+#endif
+
+#ifdef CONFIG_MEMTEST
+extern void early_memtest(phys_addr_t start, phys_addr_t end);
+#else
+static inline void early_memtest(phys_addr_t start, phys_addr_t end)
+{
+}
 #endif
 
 #else

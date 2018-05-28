@@ -74,6 +74,7 @@
 #include <linux/ptrace.h>
 #include <linux/blkdev.h>
 #include <linux/elevator.h>
+#include <linux/sched_clock.h>
 #include <linux/random.h>
 
 #include <asm/io.h>
@@ -145,6 +146,12 @@ static char *ramdisk_execute_command;
  */
 unsigned int reset_devices;
 EXPORT_SYMBOL(reset_devices);
+
+#ifdef CONFIG_KNOX_KAP
+int boot_mode_security;
+EXPORT_SYMBOL(boot_mode_security);
+#endif
+
 
 static int __init set_reset_devices(char *str)
 {
@@ -230,6 +237,24 @@ static int __init loglevel(char *str)
 }
 
 early_param("loglevel", loglevel);
+
+#ifdef CONFIG_ARCH_MSM8952
+/* check uart boot */
+int jig_boot_clk_limit = 0;
+static int __init jig_status_phone(char *str)
+{
+	int jig_val;
+
+	if(get_option(&str, &jig_val)) {
+		jig_boot_clk_limit |= jig_val;
+		printk(KERN_INFO "%s = %d\n", __func__, jig_boot_clk_limit);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+early_param("uart_dbg", jig_status_phone);
+#endif
 
 /* Change NUL term back to "=", to make "param" the whole string. */
 static int __init repair_env_string(char *param, char *val, const char *unused)
@@ -365,6 +390,7 @@ static __initdata DECLARE_COMPLETION(kthreadd_done);
 static noinline void __init_refok rest_init(void)
 {
 	int pid;
+	const struct sched_param param = { .sched_priority = 1 };
 
 	rcu_scheduler_starting();
 	/*
@@ -378,6 +404,7 @@ static noinline void __init_refok rest_init(void)
 	rcu_read_lock();
 	kthreadd_task = find_task_by_pid_ns(pid, &init_pid_ns);
 	rcu_read_unlock();
+	sched_setscheduler_nocheck(kthreadd_task, SCHED_FIFO, &param);
 	complete(&kthreadd_done);
 
 	/*
@@ -405,6 +432,15 @@ static int __init do_early_param(char *param, char *val, const char *unused)
 		}
 	}
 	/* We accept everything at this stage. */
+#ifdef CONFIG_KNOX_KAP
+	if ((strncmp(param, "androidboot.security_mode", 26) == 0)) {
+		pr_warn("val = %d\n",*val);
+	        if ((strncmp(val, "1526595585", 10) == 0)) {
+				pr_info("Security Boot Mode \n");
+				boot_mode_security = 1;
+			}
+	}
+#endif
 	return 0;
 }
 
@@ -482,11 +518,6 @@ asmlinkage void __init start_kernel(void)
 	smp_setup_processor_id();
 	debug_objects_early_init();
 
-	/*
-	 * Set up the the initial canary ASAP:
-	 */
-	boot_init_stack_canary();
-
 	cgroup_init_early();
 
 	local_irq_disable();
@@ -500,6 +531,10 @@ asmlinkage void __init start_kernel(void)
 	page_address_init();
 	pr_notice("%s", linux_banner);
 	setup_arch(&command_line);
+	/*
+	 * Set up the the initial canary ASAP:
+	 */
+	boot_init_stack_canary();
 	mm_init_owner(&init_mm, &init_task);
 	mm_init_cpumask(&init_mm);
 	setup_command_line(command_line);
@@ -556,6 +591,7 @@ asmlinkage void __init start_kernel(void)
 	softirq_init();
 	timekeeping_init();
 	time_init();
+	sched_clock_postinit();
 	profile_init();
 	call_function_init();
 	WARN(!irqs_disabled(), "Interrupts were enabled early\n");

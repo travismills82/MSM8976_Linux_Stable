@@ -14,6 +14,7 @@
 #include <linux/mmc/card.h>
 #include <linux/mmc/sdio.h>
 #include <linux/mmc/sdio_func.h>
+#include <linux/delay.h>
 
 #include "sdio_ops.h"
 
@@ -61,6 +62,7 @@ int sdio_enable_func(struct sdio_func *func)
 	int ret;
 	unsigned char reg;
 	unsigned long timeout;
+	static int cnt_called = 0;
 
 	BUG_ON(!func);
 	BUG_ON(!func->card);
@@ -77,8 +79,13 @@ int sdio_enable_func(struct sdio_func *func)
 	if (ret)
 		goto err;
 
+    if(func->vendor == 0x271 && func->device == 0x50A && cnt_called < 2)
+    {
+        pr_err("SDIO: %s vendor %x device %x \n", sdio_func_id(func), func->vendor, func->device);
+        msleep(100);
+		cnt_called++;
+    }
 	timeout = jiffies + msecs_to_jiffies(func->enable_timeout);
-
 	while (1) {
 		ret = mmc_io_rw_direct(func->card, 0, 0, SDIO_CCCR_IORx, 0, &reg);
 		if (ret)
@@ -382,6 +389,39 @@ u8 sdio_readb(struct sdio_func *func, unsigned int addr, int *err_ret)
 	return val;
 }
 EXPORT_SYMBOL_GPL(sdio_readb);
+
+/**
+ *	sdio_readb_ext - read a single byte from a SDIO function
+ *	@func: SDIO function to access
+ *	@addr: address to read
+ *	@err_ret: optional status value from transfer
+ *	@in: value to add to argument
+ *
+ *	Reads a single byte from the address space of a given SDIO
+ *	function. If there is a problem reading the address, 0xff
+ *	is returned and @err_ret will contain the error code.
+ */
+unsigned char sdio_readb_ext(struct sdio_func *func, unsigned int addr,
+	int *err_ret, unsigned in)
+{
+	int ret;
+	unsigned char val;
+
+	BUG_ON(!func);
+
+	if (err_ret)
+		*err_ret = 0;
+
+	ret = mmc_io_rw_direct(func->card, 0, func->num, addr, (u8)in, &val);
+	if (ret) {
+		if (err_ret)
+			*err_ret = ret;
+		return 0xFF;
+	}
+
+	return val;
+}
+EXPORT_SYMBOL_GPL(sdio_readb_ext);
 
 /**
  *	sdio_writeb - write a single byte to a SDIO function

@@ -9,6 +9,9 @@ obj-$(CONFIG_HWMON_VID)		+= hwmon-vid.o
 obj-$(CONFIG_SENSORS_ACPI_POWER) += acpi_power_meter.o
 obj-$(CONFIG_SENSORS_ATK0110)	+= asus_atk0110.o
 
+# Thermistor
+obj-$(CONFIG_SEC_THERMISTOR)	+= sec_thermistor.o
+
 # Native drivers
 # asb100, then w83781d go first, as they can override other drivers' addresses.
 obj-$(CONFIG_SENSORS_ASB100)	+= asb100.o
@@ -113,6 +116,7 @@ obj-$(CONFIG_SENSORS_NTC_THERMISTOR)	+= ntc_thermistor.o
 obj-$(CONFIG_SENSORS_PC87360)	+= pc87360.o
 obj-$(CONFIG_SENSORS_PC87427)	+= pc87427.o
 obj-$(CONFIG_SENSORS_PCF8591)	+= pcf8591.o
+obj-$(CONFIG_SENSORS_QPNP_CURRENT_MONITOR)	+= qpnp-buck-current-monitor.o
 obj-$(CONFIG_SENSORS_S3C)	+= s3c-hwmon.o
 obj-$(CONFIG_SENSORS_SCH56XX_COMMON)+= sch56xx-common.o
 obj-$(CONFIG_SENSORS_SCH5627)	+= sch5627.o
@@ -140,6 +144,10 @@ obj-$(CONFIG_SENSORS_W83L785TS)	+= w83l785ts.o
 obj-$(CONFIG_SENSORS_W83L786NG)	+= w83l786ng.o
 obj-$(CONFIG_SENSORS_WM831X)	+= wm831x-hwmon.o
 obj-$(CONFIG_SENSORS_WM8350)	+= wm8350-hwmon.o
+obj-$(CONFIG_SENSORS_EPM_ADC)	+= epm_adc.o
+obj-$(CONFIG_SENSORS_QPNP_ADC_VOLTAGE)	+= qpnp-adc-voltage.o qpnp-adc-common.o
+obj-$(CONFIG_SENSORS_QPNP_ADC_CURRENT)	+= qpnp-adc-current.o qpnp-adc-common.o
+obj-$(CONFIG_SENSORS_BOOST_DYNAMIC_CONTROLLER)	+= boost-dynamic-controller.o
 
 obj-$(CONFIG_PMBUS)		+= pmbus/
 

@@ -396,6 +396,45 @@ int mmc_spi_set_crc(struct mmc_host *host, int use_crc)
 }
 
 /**
+ *	mmc_prepare_switch - helper; prepare to modify EXT_CSD register
+ *	@card: the MMC card associated with the data transfer
+ *	@set: cmd set values
+ *	@index: EXT_CSD register index
+ *	@value: value to program into EXT_CSD register
+ *	@tout_ms: timeout (ms) for operation performed by register write,
+ *                   timeout of zero implies maximum possible timeout
+ *	@use_busy_signal: use the busy signal as response type
+ *
+ *	Helper to prepare to modify EXT_CSD register for selected card.
+ */
+
+static inline void mmc_prepare_switch(struct mmc_command *cmd, u8 index,
+				      u8 value, u8 set, unsigned int tout_ms,
+				      bool use_busy_signal)
+{
+	cmd->opcode = MMC_SWITCH;
+	cmd->arg = (MMC_SWITCH_MODE_WRITE_BYTE << 24) |
+		  (index << 16) |
+		  (value << 8) |
+		  set;
+	cmd->flags = MMC_CMD_AC;
+	cmd->cmd_timeout_ms = tout_ms;
+	if (use_busy_signal)
+		cmd->flags |= MMC_RSP_SPI_R1B | MMC_RSP_R1B;
+	else
+		cmd->flags |= MMC_RSP_SPI_R1 | MMC_RSP_R1;
+}
+
+int __mmc_switch_cmdq_mode(struct mmc_command *cmd, u8 set, u8 index, u8 value,
+			   unsigned int timeout_ms, bool use_busy_signal,
+			   bool ignore_timeout)
+{
+	mmc_prepare_switch(cmd, index, value, set, timeout_ms, use_busy_signal);
+	return 0;
+}
+EXPORT_SYMBOL(__mmc_switch_cmdq_mode);
+
+/**
  *	__mmc_switch - modify EXT_CSD register
  *	@card: the MMC card associated with the data transfer
  *	@set: cmd set values
@@ -404,11 +443,13 @@ int mmc_spi_set_crc(struct mmc_host *host, int use_crc)
  *	@timeout_ms: timeout (ms) for operation performed by register write,
  *                   timeout of zero implies maximum possible timeout
  *	@use_busy_signal: use the busy signal as response type
+ *	@ignore_timeout: set this flag only for commands which can be HPIed
  *
  *	Modifies the EXT_CSD register for selected card.
  */
 int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
-	       unsigned int timeout_ms, bool use_busy_signal)
+		 unsigned int timeout_ms, bool use_busy_signal,
+		 bool ignore_timeout)
 {
 	int err;
 	struct mmc_command cmd = {0};
@@ -418,19 +459,12 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 	BUG_ON(!card);
 	BUG_ON(!card->host);
 
-	cmd.opcode = MMC_SWITCH;
-	cmd.arg = (MMC_SWITCH_MODE_WRITE_BYTE << 24) |
-		  (index << 16) |
-		  (value << 8) |
-		  set;
-	cmd.flags = MMC_CMD_AC;
-	if (use_busy_signal)
-		cmd.flags |= MMC_RSP_SPI_R1B | MMC_RSP_R1B;
-	else
-		cmd.flags |= MMC_RSP_SPI_R1 | MMC_RSP_R1;
 
 
+	mmc_prepare_switch(&cmd, index, value, set, timeout_ms,
+			   use_busy_signal);
 	cmd.cmd_timeout_ms = timeout_ms;
+	cmd.ignore_timeout = ignore_timeout;
 
 	err = mmc_wait_for_cmd(card->host, &cmd, MMC_CMD_RETRIES);
 	if (err)
@@ -477,9 +511,16 @@ EXPORT_SYMBOL_GPL(__mmc_switch);
 int mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
 		unsigned int timeout_ms)
 {
-	return __mmc_switch(card, set, index, value, timeout_ms, true);
+	return __mmc_switch(card, set, index, value, timeout_ms, true, false);
 }
 EXPORT_SYMBOL_GPL(mmc_switch);
+
+int mmc_switch_ignore_timeout(struct mmc_card *card, u8 set, u8 index, u8 value,
+		unsigned int timeout_ms)
+{
+	return __mmc_switch(card, set, index, value, timeout_ms, true, true);
+}
+EXPORT_SYMBOL(mmc_switch_ignore_timeout);
 
 int mmc_send_status(struct mmc_card *card, u32 *status)
 {
@@ -563,6 +604,9 @@ mmc_send_bus_test(struct mmc_card *card, struct mmc_host *host, u8 opcode,
 
 	data.sg = &sg;
 	data.sg_len = 1;
+	data.timeout_ns = 1000000;
+	data.timeout_clks = 0;
+
 	sg_init_one(&sg, data_buf, len);
 	mmc_wait_for_req(host, &mrq);
 	err = 0;
@@ -611,7 +655,7 @@ int mmc_send_hpi_cmd(struct mmc_card *card, u32 *status)
 	unsigned int opcode;
 	int err;
 
-	if (!card->ext_csd.hpi) {
+	if (!card->ext_csd.hpi_en) {
 		pr_warning("%s: Card didn't support HPI command\n",
 			   mmc_hostname(card->host));
 		return -EINVAL;
@@ -628,7 +672,7 @@ int mmc_send_hpi_cmd(struct mmc_card *card, u32 *status)
 
 	err = mmc_wait_for_cmd(card->host, &cmd, 0);
 	if (err) {
-		pr_warn("%s: error %d interrupting operation. "
+		pr_debug("%s: error %d interrupting operation. "
 			"HPI command response %#x\n", mmc_hostname(card->host),
 			err, cmd.resp[0]);
 		return err;
@@ -638,3 +682,21 @@ int mmc_send_hpi_cmd(struct mmc_card *card, u32 *status)
 
 	return 0;
 }
+
+int mmc_discard_queue(struct mmc_host *host, u32 tasks)
+{
+	struct mmc_command cmd = {0};
+
+	cmd.opcode = MMC_CMDQ_TASK_MGMT;
+	if (tasks) {
+		cmd.arg = DISCARD_TASK;
+		cmd.arg |= (tasks << 16);
+	} else {
+		cmd.arg = DISCARD_QUEUE;
+	}
+
+	cmd.flags = MMC_RSP_R1B | MMC_CMD_AC;
+
+	return mmc_wait_for_cmd(host, &cmd, 0);
+}
+EXPORT_SYMBOL(mmc_discard_queue);

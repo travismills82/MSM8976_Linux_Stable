@@ -960,6 +960,21 @@ static int acm_write_buffers_alloc(struct acm *acm)
 	return 0;
 }
 
+static int check_samsung_feature_ums_acm_device(struct usb_device *dev)
+{
+	int ret = 0;
+
+ 	pr_info("%s : product=%s\n", __func__, dev->product);
+
+	if (!dev->product)
+		return ret;
+
+	if (!strnicmp(dev->product , "SM-B360E", 8))
+		ret = 1;
+
+	return ret;
+}
+
 static int acm_probe(struct usb_interface *intf,
 		     const struct usb_device_id *id)
 {
@@ -984,6 +999,7 @@ static int acm_probe(struct usb_interface *intf,
 	unsigned long quirks;
 	int num_rx_buf;
 	int i;
+	unsigned int elength = 0;
 	int combined_interfaces = 0;
 	struct device *tty_dev;
 	int rv = -ENOMEM;
@@ -1032,9 +1048,12 @@ static int acm_probe(struct usb_interface *intf,
 			dev_err(&intf->dev, "skipping garbage\n");
 			goto next_desc;
 		}
+		elength = buffer[0];
 
 		switch (buffer[2]) {
 		case USB_CDC_UNION_TYPE: /* we've found it */
+			if (elength < sizeof(struct usb_cdc_union_desc))
+				goto next_desc;
 			if (union_header) {
 				dev_err(&intf->dev, "More than one "
 					"union descriptor, skipping ...\n");
@@ -1043,31 +1062,38 @@ static int acm_probe(struct usb_interface *intf,
 			union_header = (struct usb_cdc_union_desc *)buffer;
 			break;
 		case USB_CDC_COUNTRY_TYPE: /* export through sysfs*/
+			if (elength < sizeof(struct usb_cdc_country_functional_desc))
+				goto next_desc;
 			cfd = (struct usb_cdc_country_functional_desc *)buffer;
 			break;
 		case USB_CDC_HEADER_TYPE: /* maybe check version */
 			break; /* for now we ignore it */
 		case USB_CDC_ACM_TYPE:
+			if (elength < 4)
+				goto next_desc;
 			ac_management_function = buffer[3];
 			break;
 		case USB_CDC_CALL_MANAGEMENT_TYPE:
+			if (elength < 5)
+				goto next_desc;
 			call_management_function = buffer[3];
 			call_interface_num = buffer[4];
 			if ((quirks & NOT_A_MODEM) == 0 && (call_management_function & 3) != 3)
 				dev_err(&intf->dev, "This device cannot do calls on its own. It is not a modem.\n");
 			break;
 		default:
-			/* there are LOTS more CDC descriptors that
+			/*
+			 * there are LOTS more CDC descriptors that
 			 * could legitimately be found here.
 			 */
 			dev_dbg(&intf->dev, "Ignoring descriptor: "
-					"type %02x, length %d\n",
-					buffer[2], buffer[0]);
+					"type %02x, length %ud\n",
+					buffer[2], elength);
 			break;
 		}
 next_desc:
-		buflen -= buffer[0];
-		buffer += buffer[0];
+		buflen -= elength;
+		buffer += elength;
 	}
 
 	if (!union_header) {
@@ -1090,6 +1116,11 @@ next_desc:
 				goto look_for_collapsed_interface;
 			}
 		}
+	} else if (check_samsung_feature_ums_acm_device(usb_dev)) {
+		data_interface = usb_ifnum_to_if(usb_dev, 2);
+		control_interface = usb_ifnum_to_if(usb_dev, 1);
+		pr_info("%s : manual set data_interface = 2, control_interface = 1\n", __func__);
+		goto skip_normal_probe;
 	} else {
 		control_interface = usb_ifnum_to_if(usb_dev, union_header->bMasterInterface0);
 		data_interface = usb_ifnum_to_if(usb_dev, (data_interface_num = union_header->bSlaveInterface0));
@@ -1216,6 +1247,7 @@ made_compressed_probe:
 	spin_lock_init(&acm->write_lock);
 	spin_lock_init(&acm->read_lock);
 	mutex_init(&acm->mutex);
+	acm->rx_endpoint = usb_rcvbulkpipe(usb_dev, epread->bEndpointAddress);
 	acm->is_int_ep = usb_endpoint_xfer_int(epread);
 	if (acm->is_int_ep)
 		acm->bInterval = epread->bInterval;
@@ -1264,14 +1296,14 @@ made_compressed_probe:
 		urb->transfer_dma = rb->dma;
 		if (acm->is_int_ep) {
 			usb_fill_int_urb(urb, acm->dev,
-					 usb_rcvintpipe(usb_dev, epread->bEndpointAddress),
+					 acm->rx_endpoint,
 					 rb->base,
 					 acm->readsize,
 					 acm_read_bulk_callback, rb,
 					 acm->bInterval);
 		} else {
 			usb_fill_bulk_urb(urb, acm->dev,
-					  usb_rcvbulkpipe(usb_dev, epread->bEndpointAddress),
+					  acm->rx_endpoint,
 					  rb->base,
 					  acm->readsize,
 					  acm_read_bulk_callback, rb);

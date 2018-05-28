@@ -36,10 +36,19 @@ SCHED_FEAT(CACHE_HOT_BUDDY, true)
  */
 SCHED_FEAT(WAKEUP_PREEMPTION, true)
 
+#ifdef CONFIG_SCHED_TASK_BEHAVIOR
+/*
+ * Allow the cluser selection for foreground and background
+ * processes based on OOM value and Input-Output turn-around-time
+ * to Execution time ratio.
+ */
+SCHED_FEAT(FG_BG_CLUSTER_SELECTION, true)
+#endif /* CONFIG_SCHED_TASK_BEHAVIOR */
+
 /*
  * Use arch dependent cpu power functions
  */
-SCHED_FEAT(ARCH_POWER, true)
+SCHED_FEAT(ARCH_POWER, false)
 
 SCHED_FEAT(HRTICK, false)
 SCHED_FEAT(DOUBLE_TICK, false)
@@ -54,7 +63,7 @@ SCHED_FEAT(NONTASK_POWER, true)
  * Queue remote wakeups on the target CPU and process them
  * using the scheduler IPI. Reduces rq->lock contention/bounces.
  */
-SCHED_FEAT(TTWU_QUEUE, true)
+SCHED_FEAT(TTWU_QUEUE, false)
 
 SCHED_FEAT(FORCE_SD_OVERLAP, false)
 SCHED_FEAT(RT_RUNTIME_SHARE, true)
@@ -70,3 +79,5 @@ SCHED_FEAT(LB_MIN, false)
 SCHED_FEAT(NUMA,	false)
 SCHED_FEAT(NUMA_FORCE,	false)
 #endif
+
+SCHED_FEAT(FORCE_CPU_THROTTLING_IMMINENT, false)

@@ -22,7 +22,9 @@
 #include <linux/slab.h>
 #include <linux/scatterlist.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>
 #include <linux/usb/ch9.h>
+#include <linux/pm_runtime.h>
 
 struct usb_ep;
 
@@ -45,6 +47,11 @@ struct usb_ep;
  *     by adding a zero length packet as needed;
  * @short_not_ok: When reading data, makes short packets be
  *     treated as errors (queue stops advancing till cleanup).
+ * @dma_pre_mapped: Tells the USB core driver whether this request should be
+ *	DMA-mapped before it is queued to the USB HW. When set to true, it means
+ *	that the request has already been mapped in advance and therefore the
+ *	USB core driver does NOT need to do DMA-mapping when the request is
+ *	queued to the USB HW.
  * @complete: Function called when request completes, so this request and
  *	its buffer may be re-used.  The function will always be called with
  *	interrupts disabled, and it must not sleep.
@@ -68,6 +75,7 @@ struct usb_ep;
  *	Note that for writes (IN transfers) some data bytes may still
  *	reside in a device-side FIFO when the request is reported as
  *	complete.
+ *@udc_priv: Vendor private data in usage by the UDC.
  *
  * These are allocated/freed through the endpoint they're used with.  The
  * hardware's driver can add extra per-request data to the memory it returns,
@@ -100,6 +108,7 @@ struct usb_request {
 	unsigned		no_interrupt:1;
 	unsigned		zero:1;
 	unsigned		short_not_ok:1;
+	unsigned		dma_pre_mapped:1;
 
 	void			(*complete)(struct usb_ep *ep,
 					struct usb_request *req);
@@ -108,6 +117,7 @@ struct usb_request {
 
 	int			status;
 	unsigned		actual;
+	unsigned		udc_priv;
 };
 
 /*-------------------------------------------------------------------------*/
@@ -127,7 +137,6 @@ struct usb_ep_ops {
 	struct usb_request *(*alloc_request) (struct usb_ep *ep,
 		gfp_t gfp_flags);
 	void (*free_request) (struct usb_ep *ep, struct usb_request *req);
-
 	int (*queue) (struct usb_ep *ep, struct usb_request *req,
 		gfp_t gfp_flags);
 	int (*dequeue) (struct usb_ep *ep, struct usb_request *req);
@@ -158,6 +167,8 @@ struct usb_ep_ops {
  *	enabled and remains valid until the endpoint is disabled.
  * @comp_desc: In case of SuperSpeed support, this is the endpoint companion
  *	descriptor that is used to configure the endpoint
+ * @endless: In case where endless transfer is being initiated, this is set
+ *	to disable usb event interrupt for few events.
  *
  * the bus controller driver lists all the general purpose endpoints in
  * gadget->ep_list.  the control endpoint (gadget->ep0) is not in that list,
@@ -176,6 +187,7 @@ struct usb_ep {
 	u8			address;
 	const struct usb_endpoint_descriptor	*desc;
 	const struct usb_ss_ep_comp_descriptor	*comp_desc;
+	bool			endless;
 };
 
 /*-------------------------------------------------------------------------*/
@@ -460,6 +472,7 @@ struct usb_gadget_driver;
 struct usb_gadget_ops {
 	int	(*get_frame)(struct usb_gadget *);
 	int	(*wakeup)(struct usb_gadget *);
+	int	(*func_wakeup)(struct usb_gadget *, int interface_id);
 	int	(*set_selfpowered) (struct usb_gadget *, int is_selfpowered);
 	int	(*vbus_session) (struct usb_gadget *, int is_active);
 	int	(*vbus_draw) (struct usb_gadget *, unsigned mA);
@@ -475,6 +488,7 @@ struct usb_gadget_ops {
 
 /**
  * struct usb_gadget - represents a usb slave device
+ * @work: (internal use) Workqueue to be used for sysfs_notify()
  * @ops: Function pointers used to access hardware-specific operations.
  * @ep0: Endpoint zero, used when reading or writing responses to
  *	driver setup() requests
@@ -495,11 +509,22 @@ struct usb_gadget_ops {
  *	only supports HNP on a different root port.
  * @b_hnp_enable: OTG device feature flag, indicating that the A-Host
  *	enabled HNP support.
+ * @host_request: A flag set by user when wishes to take up host role.
+ * @otg_srp_reqd: OTG test mode feature to initiate SRP after the end of
+ * current session.
  * @name: Identifies the controller hardware type.  Used in diagnostics
  *	and sometimes configuration.
  * @dev: Driver model state for this abstract device.
  * @out_epnum: last used out ep number
  * @in_epnum: last used in ep number
+ * @usb_core_id: Identifies the usb core controlled by this usb_gadget.
+ *		 Used in case of more then one core operates concurrently.
+ * @streaming_enabled: Enable streaming mode with usb core.
+ * @xfer_isr_count: UI (transfer complete) interrupts count
+ * @bam2bam_func_enabled; Indicates function using bam2bam is enabled or not.
+ * @extra_buf_alloc: Extra allocation size for AXI prefetch so that out of
+ * boundary access is protected.
+ * @interrupt_num: Interrupt number for the underlying platform device.
  *
  * Gadgets have a mostly-portable "gadget driver" implementing device
  * functions, handling all usb configurations and interfaces.  Gadget
@@ -520,6 +545,7 @@ struct usb_gadget_ops {
  * device is acting as a B-Peripheral (so is_a_peripheral is false).
  */
 struct usb_gadget {
+	struct work_struct		work;
 	/* readonly to gadget driver */
 	const struct usb_gadget_ops	*ops;
 	struct usb_ep			*ep0;
@@ -533,11 +559,23 @@ struct usb_gadget {
 	unsigned			b_hnp_enable:1;
 	unsigned			a_hnp_support:1;
 	unsigned			a_alt_hnp_support:1;
+	unsigned			host_request:1;
+	unsigned			otg_srp_reqd:1;
 	const char			*name;
 	struct device			dev;
 	unsigned			out_epnum;
 	unsigned			in_epnum;
+	bool				l1_supported;
+	u8				usb_core_id;
+	bool				streaming_enabled;
+	bool				remote_wakeup;
+	void				*private;
+	u32				xfer_isr_count;
+	bool				bam2bam_func_enabled;
+	u32				extra_buf_alloc;
+	int				interrupt_num;
 };
+#define work_to_gadget(w)	(container_of((w), struct usb_gadget, work))
 
 static inline void set_gadget_data(struct usb_gadget *gadget, void *data)
 	{ dev_set_drvdata(&gadget->dev, data); }
@@ -617,6 +655,26 @@ static inline int usb_gadget_wakeup(struct usb_gadget *gadget)
 	if (!gadget->ops->wakeup)
 		return -EOPNOTSUPP;
 	return gadget->ops->wakeup(gadget);
+}
+
+/**
+ * usb_gadget_func_wakeup - send a function remote wakeup up notification
+ * to the host connected to this gadget
+ * @gadget: controller used to wake up the host
+ * @interface_id: the interface which triggered the remote wakeup event
+ *
+ * Returns zero on success. Otherwise, negative error code is returned.
+ */
+static inline int usb_gadget_func_wakeup(struct usb_gadget *gadget,
+	int interface_id)
+{
+	if (gadget->speed != USB_SPEED_SUPER)
+		return -EOPNOTSUPP;
+
+	if (!gadget->ops->func_wakeup)
+		return -EOPNOTSUPP;
+
+	return gadget->ops->func_wakeup(gadget, interface_id);
 }
 
 /**
@@ -749,6 +807,127 @@ static inline int usb_gadget_disconnect(struct usb_gadget *gadget)
 	return gadget->ops->pullup(gadget, 0);
 }
 
+/**
+ * usb_gadget_autopm_get - increment PM-usage counter of usb gadget's parent
+ * device.
+ * @gadget: usb gadget whose parent device counter is incremented
+ *
+ * This routine should be called by function driver when it wants to use
+ * gadget's parent device and needs to guarantee that it is not suspended. In
+ * addition, the routine prevents subsequent autosuspends of gadget's parent
+ * device. However if the autoresume fails then the counter is re-decremented.
+ *
+ * This routine can run only in process context.
+ */
+static inline int usb_gadget_autopm_get(struct usb_gadget *gadget)
+{
+	int status = -ENODEV;
+
+	if (!gadget || !gadget->dev.parent)
+		return status;
+
+	status = pm_runtime_get_sync(gadget->dev.parent);
+	if (status < 0)
+		pm_runtime_put_sync(gadget->dev.parent);
+
+	if (status > 0)
+		status = 0;
+	return status;
+}
+
+/**
+ * usb_gadget_autopm_get_async - increment PM-usage counter of usb gadget's
+ * parent device.
+ * @gadget: usb gadget whose parent device counter is incremented
+ *
+ * This routine increments @gadget parent device PM usage counter and queue an
+ * autoresume request if the device is suspended. It does not autoresume device
+ * directly (it only queues a request). After a successful call, the device may
+ * not yet be resumed.
+ *
+ * This routine can run in atomic context.
+ */
+static inline int usb_gadget_autopm_get_async(struct usb_gadget *gadget)
+{
+	int status = -ENODEV;
+
+	if (!gadget || !gadget->dev.parent)
+		return status;
+
+	status = pm_runtime_get(gadget->dev.parent);
+	if (status < 0 && status != -EINPROGRESS)
+		pm_runtime_put_noidle(gadget->dev.parent);
+
+	if (status > 0 || status == -EINPROGRESS)
+		status = 0;
+	return status;
+}
+
+/**
+ * usb_gadget_autopm_get_noresume - increment PM-usage counter of usb gadget's
+ * parent device.
+ * @gadget: usb gadget whose parent device counter is incremented
+ *
+ * This routine increments PM-usage count of @gadget parent device but does not
+ * carry out an autoresume.
+ *
+ * This routine can run in atomic context.
+ */
+static inline void usb_gadget_autopm_get_noresume(struct usb_gadget *gadget)
+{
+	if (gadget && gadget->dev.parent)
+		pm_runtime_get_noresume(gadget->dev.parent);
+}
+
+/**
+ * usb_gadget_autopm_put - decrement PM-usage counter of usb gadget's parent
+ * device.
+ * @gadget: usb gadget whose parent device counter is decremented.
+ *
+ * This routine should be called by function driver when it is finished using
+ * @gadget parent device and wants to allow it to autosuspend. It decrements
+ * PM-usage counter of @gadget parent device, when the counter reaches 0, a
+ * delayed autosuspend request is attempted.
+ *
+ * This routine can run only in process context.
+ */
+static inline void usb_gadget_autopm_put(struct usb_gadget *gadget)
+{
+	if (gadget && gadget->dev.parent)
+		pm_runtime_put_sync(gadget->dev.parent);
+}
+
+/**
+ * usb_gadget_autopm_put_async - decrement PM-usage counter of usb gadget's
+ * parent device.
+ * @gadget: usb gadget whose parent device counter is decremented.
+ *
+ * This routine decrements PM-usage counter of @gadget parent device and
+ * schedules a delayed autosuspend request if the counter is <= 0.
+ *
+ * This routine can run in atomic context.
+ */
+static inline void usb_gadget_autopm_put_async(struct usb_gadget *gadget)
+{
+	if (gadget && gadget->dev.parent)
+		pm_runtime_put(gadget->dev.parent);
+}
+
+/**
+ * usb_gadget_autopm_put_no_suspend - decrement PM-usage counter of usb gadget's
+ * parent device.
+ * @gadget: usb gadget whose parent device counter is decremented.
+ *
+ * This routine decrements PM-usage counter of @gadget parent device but does
+ * not carry out an autosuspend.
+ *
+ * This routine can run in atomic context.
+ */
+static inline void usb_gadget_autopm_put_no_suspend(struct usb_gadget *gadget)
+{
+	if (gadget && gadget->dev.parent)
+		pm_runtime_put_noidle(gadget->dev.parent);
+}
 
 /*-------------------------------------------------------------------------*/
 
@@ -773,6 +952,8 @@ static inline int usb_gadget_disconnect(struct usb_gadget *gadget)
  * @suspend: Invoked on USB suspend.  May be called in_interrupt.
  * @resume: Invoked on USB resume.  May be called in_interrupt.
  * @driver: Driver model state for this driver.
+ * @usb_core_id: Identifies the usb core controlled by this usb_gadget_driver.
+ *               Used in case of more then one core operates concurrently.
  *
  * Devices are disabled till a gadget driver successfully bind()s, which
  * means the driver will handle setup() requests needed to enumerate (and
@@ -832,6 +1013,8 @@ struct usb_gadget_driver {
 
 	/* FIXME support safe rmmod */
 	struct device_driver	driver;
+
+	u8			usb_core_id;
 };
 
 
@@ -922,6 +1105,11 @@ int usb_gadget_get_string(struct usb_gadget_strings *table, int id, u8 *buf);
 
 /* utility to simplify managing config descriptors */
 
+/* Find and fill the requested descriptor into buffer */
+int
+usb_find_descriptor_fillbuf(void *, unsigned,
+		const struct usb_descriptor_header **, u8);
+
 /* write vector of descriptors into buffer */
 int usb_descriptor_fillbuf(void *, unsigned,
 		const struct usb_descriptor_header **);
@@ -949,6 +1137,24 @@ int usb_assign_descriptors(struct usb_function *f,
 		struct usb_descriptor_header **hs,
 		struct usb_descriptor_header **ss);
 void usb_free_all_descriptors(struct usb_function *f);
+
+/*-------------------------------------------------------------------------*/
+
+/**
+ * usb_func_ep_queue - queues (submits) an I/O request to a function endpoint.
+ * This function is similar to the usb_ep_queue function, but in addition it
+ * also checks whether the function is in Super Speed USB Function Suspend
+ * state, and if so a Function Wake notification is sent to the host
+ * (USB 3.0 spec, section 9.2.5.2).
+ * @func: the function which issues the USB I/O request.
+ * @ep:the endpoint associated with the request
+ * @req:the request being submitted
+ * @gfp_flags: GFP_* flags to use in case the lower level driver couldn't
+ *	pre-allocate all necessary memory with the request.
+ *
+ */
+int usb_func_ep_queue(struct usb_function *func, struct usb_ep *ep,
+				struct usb_request *req, gfp_t gfp_flags);
 
 /*-------------------------------------------------------------------------*/
 

@@ -42,6 +42,7 @@
 
 #include "netnode.h"
 #include "objsec.h"
+#include "avc.h"
 
 #define SEL_NETNODE_HASH_SIZE       256
 #define SEL_NETNODE_HASH_BKT_LIMIT   16
@@ -281,7 +282,7 @@ int sel_netnode_sid(void *addr, u16 family, u32 *sid)
  * Remove all entries from the network address table.
  *
  */
-static void sel_netnode_flush(void)
+void sel_netnode_flush(void)
 {
 	unsigned int idx;
 	struct sel_netnode *node, *node_tmp;
@@ -312,6 +313,11 @@ static __init int sel_netnode_init(void)
 	int iter;
 	int ret;
 
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+	selinux_enabled = 1;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	if (!selinux_enabled)
 		return 0;
 

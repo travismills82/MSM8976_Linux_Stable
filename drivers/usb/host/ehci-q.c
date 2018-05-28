@@ -273,7 +273,7 @@ __acquires(ehci->lock)
 
 #ifdef EHCI_URB_TRACE
 	ehci_dbg (ehci,
-		"%s %s urb %p ep%d%s status %d len %d/%d\n",
+		"%s %s urb %pK ep%d%s status %d len %d/%d\n",
 		__func__, urb->dev->devpath, urb,
 		usb_pipeendpoint (urb->pipe),
 		usb_pipein (urb->pipe) ? "in" : "out",
@@ -362,7 +362,7 @@ qh_completions (struct ehci_hcd *ehci, struct ehci_qh *qh)
 			/* Report Data Buffer Error: non-fatal but useful */
 			if (token & QTD_STS_DBE)
 				ehci_dbg(ehci,
-					"detected DataBufferErr for urb %p ep%d%s len %d, qtd %p [qh %p]\n",
+					"detected DataBufferErr for urb %pK ep%d%s len %d, qtd %pK [qh %pK]\n",
 					urb,
 					usb_endpoint_num(&urb->ep->desc),
 					usb_endpoint_dir_in(&urb->ep->desc) ? "in" : "out",
@@ -606,7 +606,8 @@ qh_urb_transaction (
 	qtd->urb = urb;
 
 	token = QTD_STS_ACTIVE;
-	token |= (EHCI_TUNE_CERR << 10);
+	if (!ehci->disable_cerr)
+		token |= (EHCI_TUNE_CERR << 10);
 	/* for split transactions, SplitXState initialized to zero */
 
 	len = urb->transfer_buffer_length;
@@ -919,7 +920,7 @@ qh_make (
 		}
 		break;
 	default:
-		ehci_dbg(ehci, "bogus dev %p speed %d\n", urb->dev,
+		ehci_dbg(ehci, "bogus dev %pK speed %d\n", urb->dev,
 			urb->dev->speed);
 done:
 		qh_destroy(ehci, qh);
@@ -1107,7 +1108,7 @@ submit_async (
 		struct ehci_qtd *qtd;
 		qtd = list_entry(qtd_list->next, struct ehci_qtd, qtd_list);
 		ehci_dbg(ehci,
-			 "%s %s urb %p ep%d%s len %d, qtd %p [qh %p]\n",
+			 "%s %s urb %pK ep%d%s len %d, qtd %pK [qh %pK]\n",
 			 __func__, urb->dev->devpath, urb,
 			 epnum & 0x0f, (epnum & USB_DIR_IN) ? "in" : "out",
 			 urb->transfer_buffer_length,
@@ -1142,6 +1143,111 @@ submit_async (
 		qtd_list_free (ehci, urb, qtd_list);
 	return rc;
 }
+
+/*-------------------------------------------------------------------------*/
+/* This function creates the qtds and submits them for the
+ * SINGLE_STEP_SET_FEATURE Test.
+ * This is done in two parts: first SETUP req for GetDesc is sent then
+ * 15 seconds later, the IN stage for GetDesc starts to req data from dev
+ *
+ * is_setup : i/p arguement decides which of the two stage needs to be
+ * performed; TRUE - SETUP and FALSE - IN+STATUS
+ * Returns 0 if success
+ */
+#ifdef CONFIG_USB_EHCI_EHSET
+static int
+submit_single_step_set_feature(
+	struct usb_hcd  *hcd,
+	struct urb      *urb,
+	int 		is_setup
+) {
+	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
+	struct list_head	qtd_list;
+	struct list_head	*head ;
+
+	struct ehci_qtd		*qtd, *qtd_prev;
+	dma_addr_t		buf;
+	int			len, maxpacket;
+	u32			token;
+
+	INIT_LIST_HEAD(&qtd_list);
+	head = &qtd_list;
+
+	/*
+	 * URBs map to sequences of QTDs:  one logical transaction
+	 */
+	qtd = ehci_qtd_alloc(ehci, GFP_KERNEL);
+	if (unlikely(!qtd))
+		return -1;
+	list_add_tail(&qtd->qtd_list, head);
+	qtd->urb = urb;
+
+	token = QTD_STS_ACTIVE;
+	token |= (EHCI_TUNE_CERR << 10);
+
+	len = urb->transfer_buffer_length;
+	/* Check if the request is to perform just the SETUP stage (getDesc)
+	 * as in SINGLE_STEP_SET_FEATURE test, DATA stage (IN) happens
+	 * 15 secs after the setup
+	 */
+	if (is_setup) {
+		/* SETUP pid */
+		qtd_fill(ehci, qtd, urb->setup_dma,
+				sizeof(struct usb_ctrlrequest),
+				token | (2 /* "setup" */ << 8), 8);
+
+		submit_async(ehci, urb, &qtd_list, GFP_ATOMIC);
+		return 0; /*Return now; we shall come back after 15 seconds*/
+	}
+
+	/*---------------------------------------------------------------------
+	 * IN: data transfer stage:  buffer setup : start the IN txn phase for
+	 * the get_Desc SETUP which was sent 15seconds back
+	 */
+	token ^= QTD_TOGGLE;   /*We need to start IN with DATA-1 Pid-sequence*/
+	buf = urb->transfer_dma;
+
+	token |= (1 /* "in" */ << 8);  /*This is IN stage*/
+
+	maxpacket = max_packet(usb_maxpacket(urb->dev, urb->pipe, 0));
+
+	qtd_fill(ehci, qtd, buf, len, token, maxpacket);
+
+	/* Our IN phase shall always be a short read; so keep the queue running
+	* and let it advance to the next qtd which zero length OUT status */
+
+	qtd->hw_alt_next = EHCI_LIST_END(ehci);
+
+	/*----------------------------------------------------------------------
+	 * STATUS stage for GetDesc control request
+	 */
+	token ^= 0x0100;	/* "in" <--> "out"  */
+	token |= QTD_TOGGLE;	/* force DATA1 */
+
+	qtd_prev = qtd;
+	qtd = ehci_qtd_alloc(ehci, GFP_ATOMIC);
+	if (unlikely(!qtd))
+		goto cleanup;
+	qtd->urb = urb;
+	qtd_prev->hw_next = QTD_NEXT(ehci, qtd->qtd_dma);
+	list_add_tail(&qtd->qtd_list, head);
+
+	/* dont fill any data in such packets */
+	qtd_fill(ehci, qtd, 0, 0, token, 0);
+
+	/* by default, enable interrupt on urb completion */
+	if (likely(!(urb->transfer_flags & URB_NO_INTERRUPT)))
+		qtd->hw_token |= cpu_to_hc32(ehci, QTD_IOC);
+
+	submit_async(ehci, urb, &qtd_list, GFP_KERNEL);
+
+	return 0;
+
+cleanup:
+	qtd_list_free(ehci, urb, head);
+	return -1;
+}
+#endif
 
 /*-------------------------------------------------------------------------*/
 

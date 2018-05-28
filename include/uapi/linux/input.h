@@ -16,6 +16,77 @@
 #include <linux/types.h>
 #endif
 
+/*
+ * sec Log
+ */
+#define SECLOG	"[sec_input]"
+#define INPUT_LOG_BUF_SIZE	512
+
+#ifdef CONFIG_SEC_DEBUG_TSP_LOG
+#include <linux/sec_debug.h>
+
+#define input_dbg(mode, dev, fmt, ...)						\
+({										\
+	static char input_log_buf[INPUT_LOG_BUF_SIZE];				\
+	snprintf(input_log_buf, sizeof(input_log_buf), "%s %s", SECLOG, fmt);	\
+	dev_dbg(dev, input_log_buf, ## __VA_ARGS__);				\
+	if (mode) {								\
+		if (dev)							\
+			snprintf(input_log_buf, sizeof(input_log_buf), "%s %s",	\
+					dev_driver_string(dev), dev_name(dev));	\
+		else								\
+			snprintf(input_log_buf, sizeof(input_log_buf), "NULL");	\
+		sec_debug_tsp_log_msg(input_log_buf, fmt, ## __VA_ARGS__);	\
+	}									\
+})
+#define input_info(mode, dev, fmt, ...)						\
+({										\
+	static char input_log_buf[INPUT_LOG_BUF_SIZE];				\
+	snprintf(input_log_buf, sizeof(input_log_buf), "%s %s", SECLOG, fmt);	\
+	dev_info(dev, input_log_buf, ## __VA_ARGS__);				\
+	if (mode) {								\
+		if (dev)							\
+			snprintf(input_log_buf, sizeof(input_log_buf), "%s %s",	\
+					dev_driver_string(dev), dev_name(dev));	\
+		else								\
+			snprintf(input_log_buf, sizeof(input_log_buf), "NULL");	\
+		sec_debug_tsp_log_msg(input_log_buf, fmt, ## __VA_ARGS__);	\
+	}									\
+})
+#define input_err(mode, dev, fmt, ...)						\
+({										\
+	static char input_log_buf[INPUT_LOG_BUF_SIZE];				\
+	snprintf(input_log_buf, sizeof(input_log_buf), "%s %s", SECLOG, fmt);	\
+	dev_err(dev, input_log_buf, ## __VA_ARGS__);				\
+	if (mode) {								\
+		if (dev)							\
+			snprintf(input_log_buf, sizeof(input_log_buf), "%s %s",	\
+					dev_driver_string(dev), dev_name(dev));	\
+		else								\
+			snprintf(input_log_buf, sizeof(input_log_buf), "NULL");	\
+		sec_debug_tsp_log_msg(input_log_buf, fmt, ## __VA_ARGS__);	\
+	}									\
+})
+#else
+#define input_dbg(mode, dev, fmt, ...)						\
+({										\
+	static char input_log_buf[INPUT_LOG_BUF_SIZE];				\
+	snprintf(input_log_buf, sizeof(input_log_buf), "%s %s", SECLOG, fmt);	\
+	dev_dbg(dev, input_log_buf, ## __VA_ARGS__);				\
+})
+#define input_info(mode, dev, fmt, ...)						\
+({										\
+	static char input_log_buf[INPUT_LOG_BUF_SIZE];				\
+	snprintf(input_log_buf, sizeof(input_log_buf), "%s %s", SECLOG, fmt);	\
+	dev_info(dev, input_log_buf, ## __VA_ARGS__);				\
+})
+#define input_err(mode, dev, fmt, ...)						\
+({										\
+	static char input_log_buf[INPUT_LOG_BUF_SIZE];				\
+	snprintf(input_log_buf, sizeof(input_log_buf), "%s %s", SECLOG, fmt);	\
+	dev_err(dev, input_log_buf, ## __VA_ARGS__);				\
+})
+#endif
 
 /*
  * The event structure itself
@@ -153,6 +224,9 @@ struct input_keymap_entry {
 
 #define EVIOCGRAB		_IOW('E', 0x90, int)			/* Grab/Release device */
 
+#define EVIOCGSUSPENDBLOCK	_IOR('E', 0x91, int)			/* get suspend block enable */
+#define EVIOCSSUSPENDBLOCK	_IOW('E', 0x91, int)			/* set suspend block enable */
+
 #define EVIOCSCLOCKID		_IOW('E', 0xa0, int)			/* Set clockid to be used for timestamps */
 
 /*
@@ -163,6 +237,7 @@ struct input_keymap_entry {
 #define INPUT_PROP_DIRECT		0x01	/* direct input devices */
 #define INPUT_PROP_BUTTONPAD		0x02	/* has button(s) under pad */
 #define INPUT_PROP_SEMI_MT		0x03	/* touch rectangle only */
+#define INPUT_PROP_NO_DUMMY_RELEASE	0x04	/* no dummy event */
 
 #define INPUT_PROP_MAX			0x1f
 #define INPUT_PROP_CNT			(INPUT_PROP_MAX + 1)
@@ -194,6 +269,8 @@ struct input_keymap_entry {
 #define SYN_CONFIG		1
 #define SYN_MT_REPORT		2
 #define SYN_DROPPED		3
+#define SYN_TIME_SEC		4
+#define SYN_TIME_NSEC		5
 
 /*
  * Keys and buttons
@@ -458,13 +535,19 @@ struct input_keymap_entry {
 #define KEY_VIDEO_NEXT		241	/* drive next video source */
 #define KEY_VIDEO_PREV		242	/* drive previous video source */
 #define KEY_BRIGHTNESS_CYCLE	243	/* brightness up, after max is min */
-#define KEY_BRIGHTNESS_ZERO	244	/* brightness off, use ambient */
+#define KEY_BRIGHTNESS_AUTO	244	/* Set Auto Brightness: manual
+					  brightness control is off,
+					  rely on ambient */
+#define KEY_BRIGHTNESS_ZERO	KEY_BRIGHTNESS_AUTO
 #define KEY_DISPLAY_OFF		245	/* display device to off state */
 
-#define KEY_WIMAX		246
+#define KEY_WWAN		246	/* Wireless WAN (LTE, UMTS, GSM, etc.) */
+#define KEY_WIMAX		KEY_WWAN
 #define KEY_RFKILL		247	/* Key that controls all radios */
 
 #define KEY_MICMUTE		248	/* Mute / unmute the microphone */
+
+#define KEY_RECENT		254	/* RECENT / switching application */
 
 /* Code 255 is reserved for special needs of AT keyboard driver */
 
@@ -506,11 +589,15 @@ struct input_keymap_entry {
 #define BTN_DEAD		0x12f
 
 #define BTN_GAMEPAD		0x130
-#define BTN_A			0x130
-#define BTN_B			0x131
+#define BTN_SOUTH		0x130
+#define BTN_A			BTN_SOUTH
+#define BTN_EAST		0x131
+#define BTN_B			BTN_EAST
 #define BTN_C			0x132
-#define BTN_X			0x133
-#define BTN_Y			0x134
+#define BTN_NORTH		0x133
+#define BTN_X			BTN_NORTH
+#define BTN_WEST		0x134
+#define BTN_Y			BTN_WEST
 #define BTN_Z			0x135
 #define BTN_TL			0x136
 #define BTN_TR			0x137
@@ -521,6 +608,7 @@ struct input_keymap_entry {
 #define BTN_MODE		0x13c
 #define BTN_THUMBL		0x13d
 #define BTN_THUMBR		0x13e
+#define BTN_GAME		0x13f
 
 #define BTN_DIGI		0x140
 #define BTN_TOOL_PEN		0x140
@@ -623,6 +711,7 @@ struct input_keymap_entry {
 #define KEY_ADDRESSBOOK		0x1ad	/* AL Contacts/Address Book */
 #define KEY_MESSENGER		0x1ae	/* AL Instant Messaging */
 #define KEY_DISPLAYTOGGLE	0x1af	/* Turn display (LCD) on and off */
+#define KEY_BRIGHTNESS_TOGGLE	KEY_DISPLAYTOGGLE
 #define KEY_SPELLCHECK		0x1b0   /* AL Spell Check */
 #define KEY_LOGOFF		0x1b1   /* AL Logoff */
 
@@ -641,6 +730,11 @@ struct input_keymap_entry {
 #define KEY_DEL_EOS		0x1c1
 #define KEY_INS_LINE		0x1c2
 #define KEY_DEL_LINE		0x1c3
+#define KEY_SIDE_GESTURE	0x1c6
+#define KEY_BLACK_UI_GESTURE	0x1c7
+
+#define KEY_SIDE_GESTURE_RIGHT	0x1ca
+#define KEY_SIDE_GESTURE_LEFT	0x1cb
 
 #define KEY_FN			0x1d0
 #define KEY_FN_ESC		0x1d1
@@ -688,6 +782,7 @@ struct input_keymap_entry {
 #define KEY_NUMERIC_STAR	0x20a
 #define KEY_NUMERIC_POUND	0x20b
 
+#define KEY_CAMERA_SNAPSHOT	0x2fe
 #define KEY_CAMERA_FOCUS	0x210
 #define KEY_WPS_BUTTON		0x211	/* WiFi Protected Setup key */
 
@@ -706,6 +801,24 @@ struct input_keymap_entry {
 #define KEY_ATTENDANT_OFF	0x21c
 #define KEY_ATTENDANT_TOGGLE	0x21d	/* Attendant call on or off */
 #define KEY_LIGHTS_TOGGLE	0x21e	/* Reading light on or off */
+
+#define BTN_DPAD_UP		0x220
+#define BTN_DPAD_DOWN		0x221
+#define BTN_DPAD_LEFT		0x222
+#define BTN_DPAD_RIGHT		0x223
+
+#define KEY_ALS_TOGGLE		0x230	/* Ambient light sensor */
+
+#define KEY_BUTTONCONFIG		0x240	/* AL Button Configuration */
+#define KEY_TASKMANAGER		0x241	/* AL Task/Project Manager */
+#define KEY_JOURNAL		0x242	/* AL Log/Journal/Timecard */
+#define KEY_CONTROLPANEL		0x243	/* AL Control Panel */
+#define KEY_APPSELECT		0x244	/* AL Select Task/Application */
+#define KEY_SCREENSAVER		0x245	/* AL Screen Saver */
+#define KEY_VOICECOMMAND		0x246	/* Listening Voice Command */
+
+#define KEY_BRIGHTNESS_MIN		0x250	/* Set Brightness to Minimum */
+#define KEY_BRIGHTNESS_MAX		0x251	/* Set Brightness to Maximum */
 
 #define BTN_TRIGGER_HAPPY		0x2c0
 #define BTN_TRIGGER_HAPPY1		0x2c0
@@ -749,8 +862,28 @@ struct input_keymap_entry {
 #define BTN_TRIGGER_HAPPY39		0x2e6
 #define BTN_TRIGGER_HAPPY40		0x2e7
 
+#ifdef CONFIG_USB_HMT_SAMSUNG_INPUT
+#define KEY_TA_STATUS_CMD		0x2f3
+#define KEY_START_NOTA_CMD		0x2fc
+#define KEY_START_TA_CMD		0x2fd
+#define KEY_ONGOING_TA_CMD		0x2fe
+#define KEY_HMT_CMD_START		KEY_TA_STATUS_CMD
+#endif
+
 /* We avoid low common keys in module aliases so they don't get huge. */
 #define KEY_MIN_INTERESTING	KEY_MUTE
+
+/* 0x2f1~2f9 is key event for special event. */
+#define KEY_CP_GRIP		0x2f1	/* grip sensor for CP */
+#define KEY_TSP_TKEY_DUMMY	0x2f2	/* dummy key */
+#define KEY_TSP_RESERVED_KEY3	0x2f3
+#define KEY_TSP_RESERVED_KEY4	0x2f4
+#define KEY_TSP_RESERVED_KEY5	0x2f5
+#define KEY_TSP_RESERVED_KEY6	0x2f6
+#define KEY_TSP_RESERVED_KEY7	0x2f7
+#define KEY_TSP_RESERVED_KEY8	0x2f8
+#define KEY_TSP_RESERVED_KEY9	0x2f9
+
 #define KEY_MAX			0x2ff
 #define KEY_CNT			(KEY_MAX+1)
 
@@ -819,7 +952,8 @@ struct input_keymap_entry {
 #define ABS_MT_DISTANCE		0x3b	/* Contact hover distance */
 #define ABS_MT_TOOL_X		0x3c	/* Center X tool position */
 #define ABS_MT_TOOL_Y		0x3d	/* Center Y tool position */
-
+#define ABS_MT_PALM		0x3e	/* palm touch */
+#define ABS_MT_GRIP		0x3f	/* edge grip */
 
 #define ABS_MAX			0x3f
 #define ABS_CNT			(ABS_MAX+1)
@@ -844,7 +978,17 @@ struct input_keymap_entry {
 #define SW_FRONT_PROXIMITY	0x0b  /* set = front proximity sensor active */
 #define SW_ROTATE_LOCK		0x0c  /* set = rotate locked/disabled */
 #define SW_LINEIN_INSERT	0x0d  /* set = inserted */
-#define SW_MAX			0x0f
+#define SW_HPHL_OVERCURRENT	0x0e  /* set = over current on left hph */
+#define SW_HPHR_OVERCURRENT	0x0f  /* set = over current on right hph */
+#define SW_UNSUPPORT_INSERT	0x10  /* set = unsupported device inserted */
+#define SW_MICROPHONE2_INSERT   0x11  /* set = inserted */
+#define SW_MUTE_DEVICE		0x12  /* set = device disabled */
+
+#define SW_PEN_INSERT		0x13  /* set = pen insert, remove */
+#define SW_FLIP                 0x15  /* set = flip cover open, close*/
+#define SW_GLOVE		0x16  /* set = glove mode */
+
+#define SW_MAX			0x20
 #define SW_CNT			(SW_MAX+1)
 
 /*

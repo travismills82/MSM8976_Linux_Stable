@@ -39,8 +39,6 @@ enum {
 	MIGRATE_UNMOVABLE,
 	MIGRATE_RECLAIMABLE,
 	MIGRATE_MOVABLE,
-	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */
-	MIGRATE_RESERVE = MIGRATE_PCPTYPES,
 #ifdef CONFIG_CMA
 	/*
 	 * MIGRATE_CMA migration type is designed to mimic the way
@@ -57,16 +55,30 @@ enum {
 	 */
 	MIGRATE_CMA,
 #endif
+	MIGRATE_PCPTYPES, /* the number of types on the pcp lists */
+	MIGRATE_RESERVE = MIGRATE_PCPTYPES,
 #ifdef CONFIG_MEMORY_ISOLATION
-	MIGRATE_ISOLATE,	/* can't allocate from here */
+	MIGRATE_ISOLATE  ,	/* can't allocate from here */
 #endif
 	MIGRATE_TYPES
 };
 
+/*
+ * Returns a list which contains the migrate types on to which
+ * an allocation falls back when the free list for the migrate
+ * type mtype is depleted.
+ * The end of the list is delimited by the type MIGRATE_RESERVE.
+ */
+extern int *get_migratetype_fallbacks(int mtype);
+
 #ifdef CONFIG_CMA
+bool is_cma_pageblock(struct page *page);
 #  define is_migrate_cma(migratetype) unlikely((migratetype) == MIGRATE_CMA)
+#  define get_cma_migrate_type() MIGRATE_CMA
 #else
+#  define is_cma_pageblock(page) false
 #  define is_migrate_cma(migratetype) false
+#  define get_cma_migrate_type() MIGRATE_MOVABLE
 #endif
 
 #define for_each_migratetype_order(order, type) \
@@ -75,14 +87,19 @@ enum {
 
 extern int page_group_by_mobility_disabled;
 
+#define NR_MIGRATETYPE_BITS (PB_migrate_end - PB_migrate + 1)
+#define MIGRATETYPE_MASK ((1UL << NR_MIGRATETYPE_BITS) - 1)
+
 static inline int get_pageblock_migratetype(struct page *page)
 {
-	return get_pageblock_flags_group(page, PB_migrate, PB_migrate_end);
+	BUILD_BUG_ON(PB_migrate_end - PB_migrate != 2);
+	return get_pageblock_flags_mask(page, PB_migrate_end, MIGRATETYPE_MASK);
 }
 
 struct free_area {
 	struct list_head	free_list[MIGRATE_TYPES];
 	unsigned long		nr_free;
+	unsigned long		nr_free_cma;
 };
 
 struct pglist_data;
@@ -143,6 +160,7 @@ enum zone_stat_item {
 #endif
 	NR_ANON_TRANSPARENT_HUGEPAGES,
 	NR_FREE_CMA_PAGES,
+	NR_SWAPCACHE,
 	NR_VM_ZONE_STAT_ITEMS };
 
 /*
@@ -352,7 +370,6 @@ struct zone {
 	 * free areas of different sizes
 	 */
 	spinlock_t		lock;
-	int                     all_unreclaimable; /* All pages pinned */
 #if defined CONFIG_COMPACTION || defined CONFIG_CMA
 	/* Set to true when the PG_migrate_skip bits should be cleared */
 	bool			compact_blockskip_flush;
@@ -361,9 +378,22 @@ struct zone {
 	unsigned long		compact_cached_free_pfn;
 	unsigned long		compact_cached_migrate_pfn;
 #endif
+
+#ifdef CONFIG_MEMORY_ISOLATION
+	/*
+	 * Number of isolated pageblock. It is used to solve incorrect
+	 * freepage counting problem due to racy retrieving migratetype
+	 * of pageblock. Protected by zone->lock.
+	 */
+	unsigned long           nr_isolate_pageblock;
+#endif
+
 #ifdef CONFIG_MEMORY_HOTPLUG
 	/* see spanned/present_pages for more description */
 	seqlock_t		span_seqlock;
+#endif
+#ifdef CONFIG_CMA
+	bool			cma_alloc;
 #endif
 	struct free_area	free_area[MAX_ORDER];
 
@@ -474,10 +504,16 @@ struct zone {
 	 * frequently read in proximity to zone->lock.  It's good to
 	 * give them a chance of being in the same cacheline.
 	 *
-	 * Write access to present_pages and managed_pages at runtime should
-	 * be protected by lock_memory_hotplug()/unlock_memory_hotplug().
-	 * Any reader who can't tolerant drift of present_pages and
-	 * managed_pages should hold memory hotplug lock to get a stable value.
+	 * Write access to present_pages at runtime should be protected by
+	 * lock_memory_hotplug()/unlock_memory_hotplug().  Any reader who can't
+	 * tolerant drift of present_pages should hold memory hotplug lock to
+	 * get a stable value.
+	 *
+	 * Read access to managed_pages should be safe because it's unsigned
+	 * long. Write access to zone->managed_pages and totalram_pages are
+	 * protected by managed_page_count_lock at runtime. Idealy only
+	 * adjust_managed_page_count() should be used instead of directly
+	 * touching zone->managed_pages and totalram_pages.
 	 */
 	unsigned long		spanned_pages;
 	unsigned long		present_pages;
@@ -494,6 +530,13 @@ typedef enum {
 	ZONE_OOM_LOCKED,		/* zone is in OOM killer zonelist */
 	ZONE_CONGESTED,			/* zone has many dirty pages backed by
 					 * a congested BDI
+					 */
+	ZONE_TAIL_LRU_DIRTY,		/* reclaim scanning has recently found
+					 * many dirty file pages at the tail
+					 * of the LRU.
+					 */
+	ZONE_WRITEBACK,			/* reclaim scanning has recently found
+					 * many pages under writeback
 					 */
 } zone_flags_t;
 
@@ -515,6 +558,16 @@ static inline void zone_clear_flag(struct zone *zone, zone_flags_t flag)
 static inline int zone_is_reclaim_congested(const struct zone *zone)
 {
 	return test_bit(ZONE_CONGESTED, &zone->flags);
+}
+
+static inline int zone_is_reclaim_dirty(const struct zone *zone)
+{
+	return test_bit(ZONE_TAIL_LRU_DIRTY, &zone->flags);
+}
+
+static inline int zone_is_reclaim_writeback(const struct zone *zone)
+{
+	return test_bit(ZONE_WRITEBACK, &zone->flags);
 }
 
 static inline int zone_is_reclaim_locked(const struct zone *zone)
@@ -1212,7 +1265,10 @@ static inline int pfn_present(unsigned long pfn)
 #define pfn_to_nid(pfn)		(0)
 #endif
 
+#ifndef early_pfn_valid
 #define early_pfn_valid(pfn)	pfn_valid(pfn)
+#endif
+
 void sparse_init(void);
 #else
 #define sparse_init()	do {} while (0)

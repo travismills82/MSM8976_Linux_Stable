@@ -353,8 +353,8 @@ static int bnep_rx_frame(struct bnep_session *s, struct sk_buff *skb)
 	case BNEP_COMPRESSED_DST_ONLY:
 		memcpy(__skb_put(nskb, ETH_ALEN), skb_mac_header(skb),
 								ETH_ALEN);
-		memcpy(__skb_put(nskb, ETH_ALEN + 2), s->eh.h_source,
-								ETH_ALEN + 2);
+		memcpy(__skb_put(nskb, ETH_ALEN), s->eh.h_source,
+								ETH_ALEN);
 		break;
 
 	case BNEP_GENERAL:
@@ -394,7 +394,7 @@ static int bnep_tx_frame(struct bnep_session *s, struct sk_buff *skb)
 	int len = 0, il = 0;
 	u8 type = 0;
 
-	BT_DBG("skb %p dev %p type %d", skb, skb->dev, skb->pkt_type);
+	BT_DBG("skb %pK dev %pK type %d", skb, skb->dev, skb->pkt_type);
 
 	if (!skb->dev) {
 		/* Control frame sent by us */
